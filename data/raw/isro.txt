@@ -1,0 +1,52 @@
+Indian Space Programme - ISRO
+==============================
+
+The Indian Space Research Organisation (ISRO) was established on
+15 August 1969. Its headquarters is in Bengaluru, Karnataka.
+The founder of the Indian space programme is Dr. Vikram Sarabhai.
+
+ISRO ka headquarter Bengaluru mein hai aur yeh Bharat ki space agency hai.
+Dr. Vikram Sarabhai ko Indian space programme ka father maana jaata hai.
+
+Key Missions:
+1. Chandrayaan-1 (2008): India's first lunar mission
+   - Discovered water molecules on the Moon's surface
+   - Moon Impact Probe landed near the lunar south pole
+
+2. Mars Orbiter Mission / Mangalyaan (2013):
+   - India became the first Asian nation to reach Mars orbit
+   - First nation to succeed on its first attempt
+   - Cost: Only ₹450 crore ($74 million) - cheapest Mars mission ever
+   - Mangalyaan duniya ka sabse sasta Mars mission tha
+
+3. Chandrayaan-2 (2019):
+   - Orbiter, lander (Vikram), and rover (Pragyan)
+   - Orbiter continues to function and send data
+   - Lander had a hard landing near the south pole
+
+4. Chandrayaan-3 (2023):
+   - Successfully landed on the lunar south pole on 23 August 2023
+   - India became the 4th country to land on the Moon
+   - First country to land near the lunar south pole
+   - Rover Pragyan operated for 14 days
+   - Chandrayaan-3 ne Bharat ko chand par pahunchane wala chautha desh bana diya
+
+5. Aditya-L1 (2023):
+   - India's first solar observation mission
+   - Placed at Lagrange Point 1 (L1)
+
+Launch Vehicles:
+- PSLV (Polar Satellite Launch Vehicle): Workhorse of ISRO
+  - Has launched over 350 satellites including foreign satellites
+- GSLV (Geosynchronous Satellite Launch Vehicle): For heavier payloads
+- LVM3 (Launch Vehicle Mark-3): For Chandrayaan and Gaganyaan missions
+
+Gaganyaan Mission:
+India's first human spaceflight programme. Aims to send 3 Indian astronauts
+to low Earth orbit for 3 days. Expected launch in 2025.
+Gaganyaan Bharat ka pehla manned space mission hoga.
+
+Budget:
+ISRO's annual budget is approximately ₹13,000 crore (about $1.5 billion),
+which is significantly less than NASA ($25 billion) or ESA ($7 billion).
+Despite the limited budget, ISRO has achieved remarkable success.

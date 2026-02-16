@@ -1,0 +1,50 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# ─── Virtual Environment ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ─── IDE / Editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─── Environment Variables ────────────────────────────────────────────────────
+.env
+
+# ─── Data (generated at runtime) ─────────────────────────────────────────────
+# Keep raw corpus files, ignore generated index
+data/index/
+data/processed/
+data/benchmark_results.json
+
+# ─── Model Cache (downloaded on first run) ────────────────────────────────────
+# Sentence-transformer models are cached in ~/.cache/ not here,
+# but just in case:
+models/
+*.bin
+*.safetensors
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── OS Generated ────────────────────────────────────────────────────────────
+.DS_Store
+Desktop.ini
+ehthumbs.db

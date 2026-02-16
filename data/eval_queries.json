@@ -1,0 +1,98 @@
+[
+  {
+    "id": 1,
+    "query": "Modi ji ka education kya hai?",
+    "language": "mixed",
+    "expected_answer_contains": ["political science", "Gujarat University", "Delhi"],
+    "expected_source": "modi.txt",
+    "category": "factual"
+  },
+  {
+    "id": 2,
+    "query": "What is the Right to Education Act?",
+    "language": "en",
+    "expected_answer_contains": ["2009", "free", "compulsory", "6 to 14"],
+    "expected_source": "indian_education.txt",
+    "category": "factual"
+  },
+  {
+    "id": 3,
+    "query": "Samvidhan ke father kaun hain?",
+    "language": "mixed",
+    "expected_answer_contains": ["Ambedkar", "B.R. Ambedkar"],
+    "expected_source": "constitution.txt",
+    "category": "factual"
+  },
+  {
+    "id": 4,
+    "query": "Chandrayaan-3 kab launch hua tha?",
+    "language": "mixed",
+    "expected_answer_contains": ["2023", "south pole", "August"],
+    "expected_source": "isro.txt",
+    "category": "factual"
+  },
+  {
+    "id": 5,
+    "query": "ISRO ka headquarter kahan hai?",
+    "language": "mixed",
+    "expected_answer_contains": ["Bengaluru", "Karnataka"],
+    "expected_source": "isro.txt",
+    "category": "factual"
+  },
+  {
+    "id": 6,
+    "query": "Telangana kab bana tha?",
+    "language": "mixed",
+    "expected_answer_contains": ["2014", "June", "Andhra Pradesh"],
+    "expected_source": "telangana.txt",
+    "category": "factual"
+  },
+  {
+    "id": 7,
+    "query": "संविधान में कितने अनुच्छेद हैं?",
+    "language": "hi",
+    "expected_answer_contains": ["395", "448"],
+    "expected_source": "constitution.txt",
+    "category": "factual"
+  },
+  {
+    "id": 8,
+    "query": "Mangalyaan ki cost kitni thi?",
+    "language": "mixed",
+    "expected_answer_contains": ["450", "74 million"],
+    "expected_source": "isro.txt",
+    "category": "factual"
+  },
+  {
+    "id": 9,
+    "query": "NEP 2020 mein kya changes hain?",
+    "language": "mixed",
+    "expected_answer_contains": ["5+3+3+4", "mother tongue"],
+    "expected_source": "indian_education.txt",
+    "category": "factual"
+  },
+  {
+    "id": 10,
+    "query": "Hyderabad mein kaun kaun si IT companies hain?",
+    "language": "mixed",
+    "expected_answer_contains": ["Microsoft", "Google", "Amazon"],
+    "expected_source": "telangana.txt",
+    "category": "factual"
+  },
+  {
+    "id": 11,
+    "query": "What are the fundamental rights in Indian constitution?",
+    "language": "en",
+    "expected_answer_contains": ["equality", "freedom", "religion"],
+    "expected_source": "constitution.txt",
+    "category": "factual"
+  },
+  {
+    "id": 12,
+    "query": "Swachh Bharat Mission kab launch hua?",
+    "language": "mixed",
+    "expected_answer_contains": ["2014", "October", "Clean India"],
+    "expected_source": "modi.txt",
+    "category": "factual"
+  }
+]
