@@ -54,13 +54,15 @@ def build_context_block(results: List[Dict[str, Any]]) -> str:
     Format retrieved chunks into a labeled context block for the prompt.
 
     Each chunk is labeled with its source file so the LLM can cite it.
+    For web results, the source is a domain name + URL.
 
-    Example output:
+    Example output (local):
         [Source: modi.txt]
         Modi completed his higher secondary education in Vadnagar...
 
-        [Source: indian_education.txt]
-        Right to Education Act 2009 makes education free...
+    Example output (web):
+        [Source: wikipedia.org | URL: https://en.wikipedia.org/...]
+        Elon Musk is the CEO of Tesla and SpaceX...
     """
     if not results:
         return "[No relevant context found]"
@@ -70,7 +72,14 @@ def build_context_block(results: List[Dict[str, Any]]) -> str:
         source = result.get("source", "unknown")
         text = result.get("text", "")
         score = result.get("final_score", result.get("score", 0))
-        blocks.append(f"[Source: {source} | Relevance: {score:.2f}]\n{text}")
+        url = result.get("url", "")
+
+        if url:
+            # Web source — include URL for citation
+            blocks.append(f"[Source: {source} | URL: {url} | Relevance: {score:.2f}]\n{text}")
+        else:
+            # Local file source
+            blocks.append(f"[Source: {source} | Relevance: {score:.2f}]\n{text}")
 
     return "\n\n".join(blocks)
 
@@ -162,5 +171,64 @@ Answer concisely using ONLY the context above. Cite source files."""
 
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
+
+
+# ─── Web Search Prompts ──────────────────────────────────────────────────────
+# For open-domain QA, we use web search results as context.
+# The key difference: sources are websites with URLs, not local files.
+
+WEB_SYSTEM_PROMPT = """You are a helpful multilingual question-answering assistant that answers questions using web search results.
+
+STRICT RULES (you MUST follow these):
+1. ONLY use the information provided in the WEB SEARCH RESULTS below to answer.
+2. Do NOT add information beyond what is in the search results.
+3. If the search results do not contain enough information, say: "The web search results don't have enough information to fully answer this question."
+4. Always mention which website(s) your answer is based on (cite the domain names).
+5. Keep your answer concise and factual (3-5 sentences maximum).
+6. If the question is in Hindi, Telugu, or code-mixed, you may answer in the same language style.
+7. Never make up facts, dates, numbers, or names not in the search results.
+
+You are grounded. You are factual. You cite web sources."""
+
+
+def build_web_prompt_for_ollama(
+    query: str,
+    results: List[Dict[str, Any]],
+    language: str = "en",
+) -> List[Dict[str, str]]:
+    """
+    Build a chat-format prompt for web search results.
+
+    Uses WEB_SYSTEM_PROMPT which is tuned for web sources
+    instead of local file context.
+    """
+    context_block = build_context_block(results)
+
+    if language in ("hi", "mixed"):
+        lang_instruction = (
+            "The user's query is in Hindi/code-mixed language. "
+            "You may respond in a similar style (Hindi-English mix)."
+        )
+    elif language == "te":
+        lang_instruction = (
+            "The user's query is in Telugu or Telugu-English mix. "
+            "You may respond in English with transliterated Telugu terms."
+        )
+    else:
+        lang_instruction = "Respond in clear English."
+
+    user_message = f"""{lang_instruction}
+
+WEB SEARCH RESULTS:
+{context_block}
+
+QUESTION: {query}
+
+Answer concisely using ONLY the web search results above. Cite website names."""
+
+    return [
+        {"role": "system", "content": WEB_SYSTEM_PROMPT},
         {"role": "user", "content": user_message},
     ]

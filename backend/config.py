@@ -67,6 +67,13 @@ SUPPORTED_LANGUAGES = ["en", "hi", "te", "ta", "bn", "mixed"]
 ENABLE_TRANSLITERATION = True
 ENABLE_STOPWORD_REMOVAL = True
 
+# ─── Web Search (Open-Domain QA) ─────────────────────────────────────────────
+# DuckDuckGo-based web search for answering ANY question in the world.
+# No API keys needed. Results are chunked + embedded on-the-fly.
+WEB_SEARCH_MAX_RESULTS = 8     # Number of web results to fetch per query
+WEB_SEARCH_REGION = "in-en"    # DuckDuckGo region (India-English)
+WEB_SEARCH_ENABLED = True      # Master toggle for web search feature
+
 # ─── API Server ───────────────────────────────────────────────────────────────
 API_HOST = "0.0.0.0"
 API_PORT = 8000

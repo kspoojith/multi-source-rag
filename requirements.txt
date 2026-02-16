@@ -14,5 +14,8 @@ numpy>=1.24.0
 # LLM communication
 requests>=2.31.0
 
+# Web search (open-domain QA)
+duckduckgo-search==7.5.3
+
 # Utilities
 python-multipart==0.0.9

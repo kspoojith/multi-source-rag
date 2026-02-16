@@ -43,13 +43,16 @@ from pydantic import BaseModel, Field
 from backend.config import (
     RAW_DATA_DIR, API_HOST, API_PORT,
     RETRIEVAL_TOP_K, SEMANTIC_WEIGHT_ALPHA, KEYWORD_WEIGHT_BETA,
+    WEB_SEARCH_MAX_RESULTS, WEB_SEARCH_REGION, WEB_SEARCH_ENABLED,
 )
 from ingestion.loader import load_documents
 from ingestion.chunker import chunk_documents, Chunk
 from ingestion.embedder import EmbeddingModel, get_embedding_model
 from ingestion.indexer import FAISSIndexer
+from ingestion.web_search import search_and_prepare
 from processing.language_detect import detect_language, get_language_label
 from processing.normalize import normalize_query
+from processing.translate import get_search_query
 from retrieval.search import hybrid_search, deduplicate_results
 from retrieval.rerank import rerank_results
 from generation.llm import generate_answer
@@ -124,6 +127,26 @@ class HealthResponse(BaseModel):
     index_loaded: bool
     total_vectors: int
     model_loaded: bool
+
+
+class AskWebRequest(BaseModel):
+    """Request model for open-domain web search QA."""
+    query: str = Field(..., description="The question to ask (any language)", min_length=1)
+    top_k: int = Field(default=5, description="Number of results to use")
+    max_web_results: int = Field(
+        default=WEB_SEARCH_MAX_RESULTS,
+        description="Number of web results to fetch"
+    )
+
+
+class AskWebResponse(BaseModel):
+    """Response model for web search QA."""
+    answer: str
+    sources: list
+    web_urls: list
+    query_info: dict
+    search_info: dict
+    generation_info: dict
 
 
 # ─── Startup Event ────────────────────────────────────────────────────────────
@@ -218,6 +241,28 @@ async def root():
             cursor: pointer; transition: all 0.2s;
         }
         .sample-q:hover { border-color: #818cf8; color: #c7d2fe; }
+        .mode-toggle {
+            display: flex; justify-content: center; gap: 4px;
+            margin-bottom: 20px; background: #1e293b; border-radius: 12px;
+            padding: 4px; width: fit-content; margin-left: auto; margin-right: auto;
+        }
+        .mode-btn {
+            padding: 10px 24px; border-radius: 10px; border: none;
+            font-size: 0.9rem; font-weight: 600; cursor: pointer;
+            background: transparent; color: #94a3b8; transition: all 0.2s;
+        }
+        .mode-btn.active {
+            background: linear-gradient(135deg, #6366f1, #818cf8);
+            color: white; box-shadow: 0 2px 10px rgba(99,102,241,0.3);
+        }
+        .mode-btn:hover:not(.active) { color: #c7d2fe; }
+        .web-url {
+            padding: 4px 10px; border-radius: 6px; font-size: 0.78rem;
+            background: rgba(56,189,248,0.15); color: #38bdf8;
+            border: 1px solid rgba(56,189,248,0.3);
+            text-decoration: none; display: inline-block; margin: 3px;
+        }
+        .web-url:hover { background: rgba(56,189,248,0.25); }
         .result-card {
             background: #1e293b; border: 1px solid #334155; border-radius: 12px;
             padding: 20px; margin-bottom: 16px;
@@ -263,19 +308,32 @@ async def root():
         <span class="badge" id="badgeIndex">⏳ Checking index...</span>
     </div>
 
+    <div class="mode-toggle">
+        <button class="mode-btn active" id="modeLocal" onclick="setMode('local')">&#128194; Local Knowledge</button>
+        <button class="mode-btn" id="modeWeb" onclick="setMode('web')">&#127760; Web Search</button>
+    </div>
+
     <div class="search-box">
         <input type="text" id="queryInput" placeholder="Ask in any language... e.g. Modi ji ka education kya hai?" />
         <button class="btn-primary" id="askBtn" onclick="ask()">Ask</button>
     </div>
 
-    <div class="sample-queries">
+    <div class="sample-queries" id="localSamples">
         <span class="sample-q" onclick="setQuery(this)">Modi ji ka education kya hai?</span>
         <span class="sample-q" onclick="setQuery(this)">Chandrayaan-3 kab launch hua tha?</span>
         <span class="sample-q" onclick="setQuery(this)">What are the fundamental rights?</span>
         <span class="sample-q" onclick="setQuery(this)">ISRO ka headquarter kahan hai?</span>
         <span class="sample-q" onclick="setQuery(this)">Telangana kab bana tha?</span>
         <span class="sample-q" onclick="setQuery(this)">NEP 2020 mein kya changes hain?</span>
-        <span class="sample-q" onclick="setQuery(this)">Hyderabad mein kaun si IT companies hain?</span>
+    </div>
+
+    <div class="sample-queries hidden" id="webSamples">
+        <span class="sample-q" onclick="setQuery(this)">Elon Musk ki net worth kitni hai?</span>
+        <span class="sample-q" onclick="setQuery(this)">IPL mein sabse zyada runs kisne banaye?</span>
+        <span class="sample-q" onclick="setQuery(this)">ChatGPT kya hai aur kaise kaam karta hai?</span>
+        <span class="sample-q" onclick="setQuery(this)">Latest Mars mission ka status kya hai?</span>
+        <span class="sample-q" onclick="setQuery(this)">Python ya JavaScript mein kya difference hai?</span>
+        <span class="sample-q" onclick="setQuery(this)">India mein best engineering colleges kaun se hain?</span>
     </div>
 
     <div class="actions">
@@ -288,6 +346,20 @@ async def root():
 
 <script>
 const API = '';
+let currentMode = 'local';  // 'local' or 'web'
+
+function setMode(mode) {
+    currentMode = mode;
+    document.getElementById('modeLocal').className = 'mode-btn' + (mode === 'local' ? ' active' : '');
+    document.getElementById('modeWeb').className = 'mode-btn' + (mode === 'web' ? ' active' : '');
+    document.getElementById('localSamples').className = 'sample-queries' + (mode === 'local' ? '' : ' hidden');
+    document.getElementById('webSamples').className = 'sample-queries' + (mode === 'web' ? '' : ' hidden');
+    const input = document.getElementById('queryInput');
+    input.placeholder = mode === 'local'
+        ? 'Ask about local knowledge... e.g. Modi ji ka education kya hai?'
+        : 'Ask anything in the world... e.g. Elon Musk ki net worth kitni hai?';
+    document.getElementById('askBtn').textContent = mode === 'local' ? 'Ask' : '🌐 Search';
+}
 
 function setQuery(el) {
     document.getElementById('queryInput').value = el.textContent;
@@ -314,15 +386,17 @@ async function ask() {
     if (!q) return;
     const btn = document.getElementById('askBtn');
     btn.disabled = true;
-    document.getElementById('results').innerHTML = '<div class="result-card"><span class="spinner"></span> Searching &amp; generating...</div>';
+    const modeLabel = currentMode === 'web' ? 'Searching the web' : 'Searching local knowledge';
+    document.getElementById('results').innerHTML = '<div class="result-card"><span class="spinner"></span> ' + modeLabel + ' &amp; generating...</div>';
     try {
-        const r = await fetch(API + '/ask', {
+        const endpoint = currentMode === 'web' ? '/ask-web' : '/ask';
+        const r = await fetch(API + endpoint, {
             method: 'POST', headers: {'Content-Type':'application/json'},
             body: JSON.stringify({query: q})
         });
         const d = await r.json();
         if (!r.ok) { throw new Error(d.detail || 'Request failed'); }
-        renderAnswer(d);
+        if (currentMode === 'web') { renderWebAnswer(d); } else { renderAnswer(d); }
     } catch(e) {
         document.getElementById('results').innerHTML = '<div class="error">❌ ' + e.message + '</div>';
     }
@@ -380,6 +454,55 @@ function meta(label, value) {
     return '<div class="meta-item"><span class="meta-label">' + label + '</span><br><span class="meta-value">' + (value ?? '-') + '</span></div>';
 }
 function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function renderWebAnswer(d) {
+    const gi = d.generation_info || {};
+    const qi = d.query_info || {};
+    const si = d.search_info || {};
+    const total = gi.total_ms || 1;
+    const segments = [
+        {name:'Normalize', ms: gi.normalization_ms||0, color:'#22d3ee'},
+        {name:'Translate', ms: gi.translation_ms||0, color:'#a78bfa'},
+        {name:'Web Search', ms: gi.web_search_ms||0, color:'#f97316'},
+        {name:'Embed+Search', ms: gi.embedding_ms||0, color:'#6366f1'},
+        {name:'Rerank', ms: gi.rerank_ms||0, color:'#22c55e'},
+        {name:'Generate', ms: gi.generation_ms||0, color:'#ef4444'},
+    ];
+    const bar = segments.map(s =>
+        '<div class="timing-seg" style="width:' + Math.max((s.ms/total)*100, 2) + '%;background:' + s.color + '" title="' + s.name + ': ' + s.ms.toFixed(0) + 'ms"></div>'
+    ).join('');
+    const timingLabels = segments.map(s =>
+        '<span style="color:' + s.color + '">' + s.name + ' ' + s.ms.toFixed(0) + 'ms</span>'
+    ).join(' &middot; ');
+
+    const sources = (d.sources||[]).map(s => '<span class="source-tag">🌐 ' + s + '</span>').join('');
+    const urls = (d.web_urls||[]).map(u => '<a class="web-url" href="' + u + '" target="_blank" rel="noopener">' + u.substring(0,60) + (u.length>60?'...':'') + '</a>').join('');
+
+    document.getElementById('results').innerHTML =
+        '<div class="result-card"><h3>&#127760; Web Search Answer</h3><div class="answer-text">' + escHtml(d.answer) + '</div>' +
+        (sources ? '<h3 style="margin-top:12px">Web Sources</h3><div class="sources">' + sources + '</div>' : '') +
+        (urls ? '<h3 style="margin-top:12px">References</h3><div>' + urls + '</div>' : '') +
+        '</div>' +
+        '<div class="result-card"><h3>Query Analysis</h3><div class="meta-grid">' +
+            meta('Language', (qi.language_label||'') + ' (' + ((qi.confidence||0)*100).toFixed(0) + '%)') +
+            meta('Original', qi.original ? qi.original.substring(0,60) : '-') +
+            meta('English Query', qi.english_query || '-') +
+            meta('Transliterated', qi.transliterated || 'N/A') +
+        '</div></div>' +
+        '<div class="result-card"><h3>Web Search Pipeline</h3><div class="meta-grid">' +
+            meta('Web Results', si.web_results_fetched) +
+            meta('Semantic Hits', si.semantic_results) +
+            meta('After Hybrid', si.hybrid_results) +
+            meta('Final Results', si.final_results) +
+        '</div></div>' +
+        '<div class="result-card"><h3>Performance &mdash; ' + total.toFixed(0) + 'ms total</h3>' +
+        '<div class="timing-bar">' + bar + '</div>' +
+        '<div style="margin-top:8px;font-size:0.8rem">' + timingLabels + '</div>' +
+        '<div class="meta-grid" style="margin-top:8px">' +
+            meta('Model', gi.model || 'N/A') +
+            meta('LLM Used', gi.llm_used ? 'Yes' : 'No') +
+        '</div></div>';
+}
 
 async function ingest() {
     document.getElementById('results').innerHTML = '<div class="result-card"><span class="spinner"></span> Ingesting documents...</div>';
@@ -629,6 +752,169 @@ async def ask_question(request: AskRequest):
 
     except Exception as e:
         logger.error(f"Ask failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ask-web", response_model=AskWebResponse)
+async def ask_web_question(request: AskWebRequest):
+    """
+    Ask ANY question — uses live web search for open-domain QA.
+
+    Pipeline:
+    1. Detect query language (hi / en / te / mixed)
+    2. Translate query to English (for better web search results)
+    3. Search DuckDuckGo with English query
+    4. Convert web results → chunks → embed on-the-fly
+    5. Hybrid search + rerank within web chunks
+    6. Generate answer with LLM using web context
+
+    This endpoint does NOT require /ingest — it works without any local data.
+
+    Example:
+      POST /ask-web
+      {"query": "Elon Musk ki net worth kitni hai?"}
+      →
+      {"answer": "Elon Musk ki net worth approximately $230 billion hai...",
+       "sources": ["forbes.com", "bloomberg.com"],
+       "web_urls": ["https://www.forbes.com/..."]}
+    """
+    total_start = time.time()
+
+    try:
+        # ── Step 1: Detect language & normalize ──
+        norm_start = time.time()
+        query_info = normalize_query(request.query)
+        language = query_info["language"]
+        norm_time = (time.time() - norm_start) * 1000
+
+        logger.info(
+            f"[Web] Query: '{request.query}' → lang={language}, "
+            f"normalized='{query_info['normalized'][:60]}...'"
+        )
+
+        # ── Step 2: Translate to English for web search ──
+        translate_start = time.time()
+        english_query = get_search_query(request.query, language)
+        translate_time = (time.time() - translate_start) * 1000
+        logger.info(f"[Web] Search query: '{english_query}'")
+
+        # ── Step 3: Web search with DuckDuckGo ──
+        web_start = time.time()
+        web_chunks = search_and_prepare(
+            query=request.query,
+            english_query=english_query,
+            max_results=request.max_web_results,
+        )
+        web_time = (time.time() - web_start) * 1000
+
+        if not web_chunks:
+            raise HTTPException(
+                status_code=404,
+                detail="No web results found. Try rephrasing your question."
+            )
+        logger.info(f"[Web] Got {len(web_chunks)} web chunks")
+
+        # ── Step 4: Embed web chunks on-the-fly ──
+        embed_start = time.time()
+        chunk_texts = [c["text"] for c in web_chunks]
+        vectors = embedding_model.embed(chunk_texts)
+
+        # Build temporary FAISS index for web results
+        import faiss
+        import numpy as np
+        temp_indexer = FAISSIndexer()
+        temp_indexer.build_index(vectors, web_chunks)
+
+        # Search within the web results
+        query_vector = embedding_model.embed_query(query_info["normalized"])
+        semantic_results = temp_indexer.search(
+            query_vector, top_k=min(request.top_k * 2, len(web_chunks))
+        )
+        embed_time = (time.time() - embed_start) * 1000
+
+        # ── Step 5: Hybrid reranking ──
+        rerank_start = time.time()
+        hybrid_results = hybrid_search(
+            semantic_results,
+            request.query,
+            alpha=SEMANTIC_WEIGHT_ALPHA,
+            beta=KEYWORD_WEIGHT_BETA,
+        )
+        deduped_results = deduplicate_results(hybrid_results)
+        final_results = rerank_results(deduped_results, top_k=request.top_k)
+        rerank_time = (time.time() - rerank_start) * 1000
+
+        # ── Step 6: Generate answer with web-aware prompt ──
+        gen_start = time.time()
+        from generation.prompt import build_web_prompt_for_ollama
+        from generation.llm import OllamaLLM
+
+        sources = list(set(r.get("source", "unknown") for r in final_results))
+        web_urls = [r.get("url", "") for r in final_results if r.get("url")]
+
+        llm = OllamaLLM()
+        if llm.is_available():
+            messages = build_web_prompt_for_ollama(
+                request.query, final_results, language
+            )
+            llm_result = llm.generate(messages=messages)
+            answer = llm_result["response"]
+            model_name = llm_result.get("model", "unknown")
+            llm_used = True
+        else:
+            # Fallback: show web snippets directly
+            context_summary = "\n\n".join(
+                f"[{r.get('source', 'web')}]: {r.get('text', '')[:250]}..."
+                for r in final_results[:3]
+            )
+            answer = f"(LLM unavailable — showing web search results)\n\n{context_summary}"
+            model_name = "fallback-context-only"
+            llm_used = False
+
+        gen_time = (time.time() - gen_start) * 1000
+        total_time = (time.time() - total_start) * 1000
+
+        return AskWebResponse(
+            answer=answer,
+            sources=sources,
+            web_urls=web_urls[:5],
+            query_info={
+                "original": query_info["original"],
+                "language": query_info["language"],
+                "language_label": get_language_label(query_info["language"]),
+                "confidence": query_info["confidence"],
+                "normalized": query_info["normalized"],
+                "english_query": english_query,
+                "transliterated": query_info.get("transliterated"),
+            },
+            search_info={
+                "web_results_fetched": len(web_chunks),
+                "semantic_results": len(semantic_results),
+                "hybrid_results": len(hybrid_results),
+                "deduped_results": len(deduped_results),
+                "final_results": len(final_results),
+                "top_sources": [r.get("source") for r in final_results],
+                "top_scores": [
+                    round(r.get("final_score", 0), 3) for r in final_results
+                ],
+            },
+            generation_info={
+                "model": model_name,
+                "llm_used": llm_used,
+                "normalization_ms": round(norm_time, 1),
+                "translation_ms": round(translate_time, 1),
+                "web_search_ms": round(web_time, 1),
+                "embedding_ms": round(embed_time, 1),
+                "rerank_ms": round(rerank_time, 1),
+                "generation_ms": round(gen_time, 1),
+                "total_ms": round(total_time, 1),
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ask-web failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
