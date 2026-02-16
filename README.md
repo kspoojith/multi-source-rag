@@ -2,7 +2,9 @@
 
 A production-grade **Retrieval-Augmented Generation (RAG)** system built for **code-mixed Indian language queries** — Hindi-English, Telugu-English, Romanized Hindi, and pure Devanagari.
 
-Built with **FastAPI**, **FAISS**, **Sentence-Transformers**, and **Ollama (Mistral 7B)**.
+Now with **🌐 Open-Domain Web Search** — ask anything in the world in Hindi, English, or Telugu!
+
+Built with **FastAPI**, **FAISS**, **Sentence-Transformers**, **DuckDuckGo Search**, and **Ollama (Mistral 7B)**.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
@@ -52,6 +54,15 @@ Most RAG systems fail on real Indian user queries like:
 
 ## Features
 
+### Two Retrieval Modes
+
+| Mode | Endpoint | Description |
+|------|----------|-------------|
+| **📁 Local Knowledge** | `POST /ask` | Answers from pre-ingested corpus files (offline, fast retrieval) |
+| **🌐 Web Search** | `POST /ask-web` | Answers ANY question using live DuckDuckGo search (open-domain) |
+
+### Core Capabilities
+
 - **Code-Mixed Language Detection** — Identifies Hindi-English, Telugu, Tamil, Bengali, and mixed queries using Unicode analysis + Romanized Hindi word detection
 - **Query Normalization** — Transliterates Romanized Hindi to Devanagari and expands queries to capture both scripts
 - **Multilingual Embeddings** — `paraphrase-multilingual-MiniLM-L12-v2` (50+ languages, 384-dim vectors)
@@ -60,7 +71,18 @@ Most RAG systems fail on real Indian user queries like:
 - **Post-Retrieval Reranking** — Topic boosting + source diversity enforcement + deduplication
 - **Anti-Hallucination Prompting** — Strict grounding rules, source citation, refusal protocol
 - **Local LLM via Ollama** — Mistral 7B runs entirely on your machine, no API keys needed
-- **Interactive Web UI** — Built-in HTML interface at `http://localhost:8000`
+
+### Web Search (Open-Domain QA)
+
+- **DuckDuckGo Integration** — Free, no API keys, no rate limits for moderate usage
+- **Query Translation** — Automatically translates Hindi/Telugu queries to English for better search results (via Ollama or keyword extraction fallback)
+- **On-The-Fly Embedding** — Web results are chunked, embedded, and indexed in a temporary FAISS index per request
+- **Web-Aware Prompting** — Separate `WEB_SYSTEM_PROMPT` instructs the LLM to cite website names and URLs
+- **Clickable References** — UI displays source URLs as clickable links
+
+### UI & Evaluation
+
+- **Interactive Web UI** — Built-in HTML interface with Local/Web mode toggle at `http://localhost:8000`
 - **Evaluation Suite** — Recall@k, Precision@k, MRR, hallucination detection, latency benchmarks
 - **Ablation Study Framework** — Compare baseline vs normalized vs hybrid vs full pipeline
 
@@ -71,38 +93,42 @@ Most RAG systems fail on real Indian user queries like:
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         User Query                                  │
-│              "Modi ji ka education kya hai?"                        │
+│              "Elon Musk ki net worth kitni hai?"                     │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
-                           ▼
+                    ┌──────┴──────┐
+                    │  Mode?      │
+                    └──┬──────┬───┘
+                 Local │      │ Web
+                       │      │
+          ┌────────────┘      └────────────┐
+          ▼                                ▼
+┌──────────────────────┐     ┌──────────────────────────────────────┐
+│  PROCESSING LAYER    │     │  PROCESSING LAYER                    │
+│  language_detect.py  │     │  language_detect.py                  │
+│  normalize.py        │     │  normalize.py                        │
+│  → "mixed" (93%)     │     │  translate.py ← NEW                 │
+│                      │     │  → English: "What is Elon Musk's     │
+│                      │     │    net worth?"                       │
+└──────────┬───────────┘     └──────────────┬───────────────────────┘
+           │                                │
+           ▼                                ▼
+┌──────────────────────┐     ┌──────────────────────────────────────┐
+│  INGESTION LAYER     │     │  WEB SEARCH LAYER ← NEW             │
+│  loader.py (files)   │     │  web_search.py                      │
+│  chunker.py          │     │  DuckDuckGo → 8 web results         │
+│  embedder.py         │     │  → chunk-like dicts with URLs        │
+│  indexer.py (persist)│     │  embedder.py → embed on-the-fly     │
+│                      │     │  indexer.py (TEMPORARY, per-request) │
+└──────────┬───────────┘     └──────────────┬───────────────────────┘
+           │                                │
+           ▼                                ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  PROCESSING LAYER                                                    │
-│  ┌─────────────────────┐   ┌──────────────────────────────────────┐ │
-│  │ language_detect.py   │──▶│ normalize.py                        │ │
-│  │ Unicode analysis     │   │ Transliterate → Expand → Stopwords  │ │
-│  │ Romanized Hindi det. │   │ "Modi जी का education क्या है?"      │ │
-│  │ → "mixed" (100%)     │   │                                      │ │
-│  └─────────────────────┘   └──────────────────────────────────────┘ │
-└──────────────────────────┬──────────────────────────────────────────┘
-                           │
-                           ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  INGESTION / EMBEDDING LAYER                                         │
-│  ┌───────────────┐ ┌──────────────┐ ┌────────────┐ ┌─────────────┐ │
-│  │ loader.py     │ │ chunker.py   │ │ embedder.py│ │ indexer.py  │ │
-│  │ Read files    │ │ Sliding      │ │ MiniLM-L12 │ │ FAISS       │ │
-│  │ .txt/.json/.md│ │ window       │ │ 384-dim    │ │ IndexFlatIP │ │
-│  │ Topic detect  │ │ 500ch/50ovl  │ │ L2-norm    │ │ Save/Load   │ │
-│  └───────────────┘ └──────────────┘ └────────────┘ └─────────────┘ │
-└──────────────────────────┬──────────────────────────────────────────┘
-                           │
-                           ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  RETRIEVAL LAYER                                                     │
+│  RETRIEVAL LAYER (shared by both modes)                              │
 │  ┌─────────────────────────┐   ┌──────────────────────────────────┐ │
 │  │ search.py               │   │ rerank.py                        │ │
 │  │ Hybrid scoring:         │   │ Topic boost (+0.1)               │ │
-│  │ α(0.7)×semantic         │   │ Source diversity (max 3/file)    │ │
+│  │ α(0.7)×semantic         │   │ Source diversity (max 3/source)  │ │
 │  │   + β(0.3)×keyword      │   │ Trim to top_k                   │ │
 │  │ Deduplication (>95%)    │   │                                  │ │
 │  └─────────────────────────┘   └──────────────────────────────────┘ │
@@ -113,15 +139,16 @@ Most RAG systems fail on real Indian user queries like:
 │  GENERATION LAYER                                                    │
 │  ┌─────────────────────┐   ┌──────────────────────────────────────┐ │
 │  │ prompt.py            │   │ llm.py                              │ │
-│  │ SYSTEM_PROMPT with   │──▶│ OllamaLLM client                   │ │
-│  │ anti-hallucination   │   │ POST /api/chat → Mistral 7B        │ │
-│  │ Source citation rules│   │ Fallback to raw context if offline  │ │
+│  │ Local: SYSTEM_PROMPT │──▶│ OllamaLLM client                   │ │
+│  │ Web: WEB_SYSTEM_PROMPT│  │ POST /api/chat → Mistral 7B        │ │
+│  │ Anti-hallucination   │   │ Fallback to raw context if offline  │ │
+│  │ Source/URL citation  │   │                                      │ │
 │  └─────────────────────┘   └──────────────────────────────────────┘ │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│                    Grounded Answer + Sources + Timings               │
+│               Grounded Answer + Sources/URLs + Timings               │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -134,7 +161,7 @@ multi-source-rag/
 │
 ├── backend/                    # Core application layer
 │   ├── __init__.py
-│   ├── app.py                  # FastAPI server — orchestrates all modules
+│   ├── app.py                  # FastAPI server — /ask, /ask-web, /ingest, /health
 │   └── config.py               # Central configuration (all tunable parameters)
 │
 ├── ingestion/                  # Document processing pipeline
@@ -142,21 +169,23 @@ multi-source-rag/
 │   ├── loader.py               # Reads .txt/.json/.md → Document objects
 │   ├── chunker.py              # Sliding-window chunking (500 chars, 50 overlap)
 │   ├── embedder.py             # Multilingual sentence embeddings (MiniLM-L12-v2)
-│   └── indexer.py              # FAISS IndexFlatIP — build, save, load, search
+│   ├── indexer.py              # FAISS IndexFlatIP — build, save, load, search
+│   └── web_search.py           # 🌐 DuckDuckGo search → web chunks (NEW)
 │
 ├── processing/                 # Query understanding
 │   ├── __init__.py
 │   ├── language_detect.py      # Detects EN / HI / TE / TA / BN / Mixed
-│   └── normalize.py            # Transliteration + query expansion + stopword removal
+│   ├── normalize.py            # Transliteration + query expansion + stopword removal
+│   └── translate.py            # 🌐 Hindi/Telugu → English translation for web search (NEW)
 │
-├── retrieval/                  # Search and ranking
+├── retrieval/                  # Search and ranking (shared by both modes)
 │   ├── __init__.py
 │   ├── search.py               # Hybrid search (semantic + keyword) + deduplication
 │   └── rerank.py               # Topic boosting + source diversity enforcement
 │
 ├── generation/                 # Answer generation
 │   ├── __init__.py
-│   ├── prompt.py               # Anti-hallucination prompt engineering
+│   ├── prompt.py               # SYSTEM_PROMPT + WEB_SYSTEM_PROMPT + anti-hallucination
 │   └── llm.py                  # Ollama LLM client with timeout + fallback
 │
 ├── evaluation/                 # Research metrics
@@ -179,7 +208,7 @@ multi-source-rag/
 ├── .env.example                # Environment variable template
 ├── .gitignore                  # Git ignore rules
 ├── requirements.txt            # Python dependencies
-├── FLOW_EXPLANATION.md         # Detailed step-by-step flow with example
+├── FLOW_EXPLANATION.md         # Detailed step-by-step flow with examples
 └── README.md                   # This file
 ```
 
@@ -234,6 +263,7 @@ This installs:
 - `faiss-cpu>=1.9.0` — Vector similarity search
 - `numpy>=1.24.0` — Numerical computing
 - `requests>=2.31.0` — HTTP client for Ollama
+- `duckduckgo-search==7.5.3` — Web search for open-domain QA (no API key needed)
 - `pydantic==2.9.0` — Data validation
 - `python-multipart==0.0.9` — Form data parsing
 
@@ -321,18 +351,35 @@ curl -X POST http://localhost:8000/ask \
 ### Web UI
 
 The interactive web interface is available at `http://localhost:8000` with:
-- Text input for questions (any language)
-- Sample query buttons for quick testing
-- Real-time display of: answer, sources, language detection, retrieval pipeline stats, and performance timings
+
+- **Mode Toggle** — Switch between **📁 Local Knowledge** and **🌐 Web Search** modes
+- **Local mode** — Ask questions about your ingested documents
+- **Web mode** — Ask anything in the world in Hindi, English, or Telugu (code-mixed too!)
+- Sample query buttons for quick testing (different samples per mode)
+- Real-time display of: answer, sources/URLs, language detection, retrieval pipeline stats, and performance timings
 - Ingest and Evaluation buttons
 
 ### API (cURL / Postman)
 
-**Ask a question:**
+**Ask from local knowledge:**
 ```bash
 curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
-  -d "{\"query\": \"What are the fundamental rights?\", \"top_k\": 5}"
+  -d "{\"query\": \"Modi ji ka education kya hai?\", \"top_k\": 5}"
+```
+
+**Ask anything (web search):**
+```bash
+curl -X POST http://localhost:8000/ask-web \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"Elon Musk ki net worth kitni hai?\"}"
+```
+
+**Ask in Telugu-English mix (web search):**
+```bash
+curl -X POST http://localhost:8000/ask-web \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"IPL mein sabse zyada runs kisne banaye?\"}"
 ```
 
 **Ingest documents:**
@@ -356,15 +403,17 @@ curl http://localhost:8000/health
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/` | Interactive web UI (HTML) |
+| `GET` | `/` | Interactive web UI with Local/Web mode toggle |
 | `GET` | `/health` | System status — model loaded, index size |
 | `POST` | `/ingest` | Load documents → chunk → embed → build FAISS index |
-| `POST` | `/ask` | Ask a question → get grounded answer with sources |
+| `POST` | `/ask` | Ask from local knowledge → grounded answer with file sources |
+| `POST` | `/ask-web` | 🌐 Ask anything → web search → answer with URL sources |
 | `POST` | `/evaluate` | Run evaluation suite on 12 test queries |
 | `GET` | `/stats` | Index and system statistics |
 
-### POST /ask — Request Body
+### POST /ask — Local Knowledge
 
+Request:
 ```json
 {
     "query": "Modi ji ka education kya hai?",
@@ -381,11 +430,10 @@ curl http://localhost:8000/health
 | `alpha` | float | 0.7 | Semantic similarity weight |
 | `beta` | float | 0.3 | Keyword match weight |
 
-### POST /ask — Response
-
+Response:
 ```json
 {
-    "answer": "Modi completed his higher secondary education in Vadnagar and later earned an MA in Political Science from Gujarat University. (Source: modi.txt)",
+    "answer": "Modi completed his higher secondary education in Vadnagar...",
     "sources": ["modi.txt"],
     "query_info": {
         "original": "Modi ji ka education kya hai?",
@@ -416,59 +464,167 @@ curl http://localhost:8000/health
 }
 ```
 
+### POST /ask-web — Open-Domain Web Search
+
+Request:
+```json
+{
+    "query": "Elon Musk ki net worth kitni hai?",
+    "top_k": 5,
+    "max_web_results": 8
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | string | *required* | Any question in Hindi/English/Telugu (mixed OK) |
+| `top_k` | int | 5 | Number of web results to use for answer |
+| `max_web_results` | int | 8 | Number of web results to fetch from DuckDuckGo |
+
+Response:
+```json
+{
+    "answer": "Elon Musk ki net worth approximately $638 billion hai, as per fortune.com.",
+    "sources": ["forbes.com", "celebritynetworth.com", "businessinsider.com"],
+    "web_urls": [
+        "https://www.celebritynetworth.com/richest-businessmen/ceos/elon-musk-net-worth/",
+        "https://www.businessinsider.com/elon-musk-net-worth",
+        "https://fortune.com/2025/12/16/elon-musk-wealth-soared-past-600-billion..."
+    ],
+    "query_info": {
+        "original": "Elon Musk ki net worth kitni hai?",
+        "language": "mixed",
+        "language_label": "Code-Mixed (Hindi-English)",
+        "confidence": 0.93,
+        "normalized": "Elon Musk ki net worth kitni hai? Elon Musk की net worth कितनी है?",
+        "english_query": "What is Elon Musk's net worth?",
+        "transliterated": "Elon Musk की net worth कितनी है?"
+    },
+    "search_info": {
+        "web_results_fetched": 8,
+        "semantic_results": 8,
+        "hybrid_results": 7,
+        "final_results": 5,
+        "top_sources": ["celebritynetworth.com", "forbes.com", "businessinsider.com"]
+    },
+    "generation_info": {
+        "model": "mistral",
+        "llm_used": true,
+        "normalization_ms": 2,
+        "translation_ms": 15675,
+        "web_search_ms": 1292,
+        "embedding_ms": 522,
+        "rerank_ms": 1,
+        "generation_ms": 80720,
+        "total_ms": 98212
+    }
+}
+```
+
 ---
 
 ## How It Works — Step by Step
 
+### Flow A — Local Knowledge (`POST /ask`)
+
 Using the example query: **"Modi ji ka education kya hai?"**
 
-### 1. Language Detection (`processing/language_detect.py`)
+#### 1. Language Detection (`processing/language_detect.py`)
 - Scans Unicode ranges → all Latin, no Devanagari
 - Checks tokens against Romanized Hindi word list → `ji`, `ka`, `kya`, `hai` match (4/6 = 67%)
 - 67% > 15% threshold → classified as **"mixed"** (Code-Mixed Hindi-English)
 
-### 2. Query Normalization (`processing/normalize.py`)
+#### 2. Query Normalization (`processing/normalize.py`)
 - **Transliterate:** `ji→जी`, `ka→का`, `kya→क्या`, `hai→है` → `"Modi जी का education क्या है?"`
 - **Expand:** Concatenate original + transliterated → embedding captures both scripts
 - **Stopword removal:** Remove `ka`, `hai` for cleaner keyword matching
 
-### 3. Embedding (`ingestion/embedder.py`)
+#### 3. Embedding (`ingestion/embedder.py`)
 - Feed expanded query to `paraphrase-multilingual-MiniLM-L12-v2`
 - 12-layer transformer → mean pooling → L2 normalization
 - Output: 384-dimensional unit vector
 
-### 4. FAISS Search (`ingestion/indexer.py`)
+#### 4. FAISS Search (`ingestion/indexer.py`)
 - Compute dot product (= cosine similarity) against all 21 indexed vectors
 - Return top-10 highest-scoring chunks with metadata
 
-### 5. Hybrid Reranking (`retrieval/search.py`)
+#### 5. Hybrid Reranking (`retrieval/search.py`)
 - Extract keywords from query (words ≥ 3 chars)
 - For each result: `final_score = 0.7 × semantic + 0.3 × keyword_overlap`
 - Filter below threshold (0.25), sort by final score → 6 results
 
-### 6. Deduplication (`retrieval/search.py`)
+#### 6. Deduplication (`retrieval/search.py`)
 - Compare token overlap between remaining chunks
 - Remove chunks with >95% similarity to a higher-ranked result → 2 results
 
-### 7. Post-Retrieval Reranking (`retrieval/rerank.py`)
+#### 7. Post-Retrieval Reranking (`retrieval/rerank.py`)
 - Boost results matching detected topic (+0.1)
 - Enforce source diversity (max 3 from same file)
 
-### 8. Prompt Construction (`generation/prompt.py`)
-- Build context block with `[Source: filename]` labels
-- Inject anti-hallucination system prompt (strict grounding rules, citation requirements, refusal protocol)
+#### 8. Prompt Construction (`generation/prompt.py`)
+- Build context block with `[Source: filename.txt]` labels
+- Inject `SYSTEM_PROMPT` with anti-hallucination rules (strict grounding, citation requirements, refusal protocol)
 
-### 9. LLM Generation (`generation/llm.py`)
+#### 9. LLM Generation (`generation/llm.py`)
 - Send prompt to Ollama Mistral 7B via `POST /api/chat`
 - Temperature = 0.1 (factual, low creativity)
 - Response: grounded answer with source citations
 - Fallback: if Ollama is unavailable, returns raw context chunks
 
-### 10. Response Assembly (`backend/app.py`)
+#### 10. Response Assembly (`backend/app.py`)
 - Combine answer + sources + query analysis + retrieval stats + per-stage timings
 - Return as structured JSON → rendered in web UI
 
-> **See [FLOW_EXPLANATION.md](FLOW_EXPLANATION.md) for a detailed walkthrough with exact function calls, data types, and intermediate outputs.**
+---
+
+### Flow B — Web Search (`POST /ask-web`)
+
+Using the example query: **"Elon Musk ki net worth kitni hai?"**
+
+This question **cannot** be answered from local corpus files — it requires real-time web data.
+
+#### 1. Language Detection & Normalization (same as local flow)
+- Detect language → `"mixed"` (93% confidence)
+- Transliterate + expand query → captures both Romanized and Devanagari forms
+
+#### 2. Query Translation (`processing/translate.py`) ← NEW
+- **Purpose:** DuckDuckGo returns MUCH better results for English queries
+- **Primary method:** Uses Ollama to translate: `"Elon Musk ki net worth kitni hai?"` → `"What is Elon Musk's net worth?"`
+- **Fallback:** If Ollama is unavailable, extracts keywords by removing Hindi/Telugu stopwords: → `"Elon Musk net worth"`
+- Translation uses `temperature=0.0` for deterministic output, capped at 60s timeout
+
+#### 3. DuckDuckGo Web Search (`ingestion/web_search.py`) ← NEW
+- Searches DuckDuckGo with the English query
+- Region: `"in-en"` (India-English) for regional relevance
+- Fetches 8 web results with title, snippet, URL, and domain
+- Converts to chunk-like dicts compatible with existing pipeline:
+  ```python
+  {"text": "title\nsnippet", "source": "forbes.com", "url": "https://...", "topic": "web"}
+  ```
+- If English translation returned no results, retries with original Hindi query
+
+#### 4. On-The-Fly Embedding & Temporary Index
+- Embed all 8 web snippets using the same multilingual model → shape `(8, 384)`
+- Build a **temporary FAISS index** (not saved to disk) — ephemeral per request
+- Search within the web results using the normalized query vector
+
+#### 5. Hybrid Search + Rerank (same pipeline as local flow)
+- Same `α=0.7 semantic + β=0.3 keyword` scoring
+- Same deduplication and source diversity enforcement
+- Web results are naturally diverse (different domains), so dedup rarely removes any
+
+#### 6. Web-Aware Prompt (`generation/prompt.py`) ← NEW
+- Uses `WEB_SYSTEM_PROMPT` (different from local `SYSTEM_PROMPT`):
+  - Instructs LLM to cite **website names** instead of filenames
+  - Context block includes `[Source: domain.com | URL: https://...]`
+- Calls `build_web_prompt_for_ollama()` with language-aware instructions
+
+#### 7. LLM Generation + Response Assembly
+- Same Ollama Mistral 7B call as local flow
+- Response includes `web_urls` list with clickable links to original web pages
+- UI renders with 🌐 header, source URLs as clickable badges, and a timing bar showing: Normalize → Translate → Web Search → Embed+Search → Rerank → Generate
+
+> **See [FLOW_EXPLANATION.md](FLOW_EXPLANATION.md) for a detailed walkthrough with exact function calls, data types, intermediate outputs, and real response examples.**
 
 ---
 
@@ -490,6 +646,9 @@ All settings are in `backend/config.py`. Key parameters:
 | `OLLAMA_MODEL` | `mistral` | LLM model name |
 | `OLLAMA_TIMEOUT` | `120` | LLM request timeout (seconds) |
 | `OLLAMA_TEMPERATURE` | `0.1` | LLM temperature (lower = more factual) |
+| `WEB_SEARCH_MAX_RESULTS` | `8` | Number of web results to fetch per query |
+| `WEB_SEARCH_REGION` | `in-en` | DuckDuckGo region (India-English) |
+| `WEB_SEARCH_ENABLED` | `True` | Master toggle for web search feature |
 
 Environment variables (`.env`) override `OLLAMA_BASE_URL` and `OLLAMA_MODEL`.
 
@@ -540,6 +699,7 @@ Tested on 12 multilingual queries (English, Hindi, Code-Mixed, Telugu):
 | **Embedding Model** | paraphrase-multilingual-MiniLM-L12-v2 | Best latency-quality tradeoff for 50+ languages on CPU |
 | **Vector Store** | FAISS (IndexFlatIP) | C++ speed, exact cosine similarity, persistent |
 | **LLM** | Ollama + Mistral 7B | Local inference, no API keys, quantized for 8GB RAM |
+| **Web Search** | DuckDuckGo (duckduckgo-search) | Free, no API keys, no rate limits, clean snippets |
 | **Language** | Python 3.10+ | Ecosystem support for ML/NLP |
 | **Deep Learning** | PyTorch (CPU) | Backend for sentence-transformers |
 
@@ -580,6 +740,16 @@ On Python 3.13+, use: `pip install faiss-cpu>=1.9.0`
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
+### Web search returns no results
+- Check your internet connection — DuckDuckGo requires network access
+- Try rephrasing the query in English for best results
+- If behind a corporate proxy, DuckDuckGo requests may be blocked
+
+### Web search translation is slow
+- Translation uses Ollama (same LLM), which takes ~15s on CPU
+- If Ollama is unavailable, the system automatically falls back to keyword extraction (instant)
+- The keyword fallback still produces good search queries (e.g., `"Elon Musk net worth"`)
+
 ---
 
 ## Adding Your Own Documents
@@ -598,39 +768,3 @@ Supported formats:
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
-
-## Hybrid Scoring Formula
-
-```
-FinalScore = α × SemanticScore + β × KeywordBoost
-```
-- `α = 0.7` (semantic weight)
-- `β = 0.3` (keyword weight)
-- Tuned via grid search in ablation studies
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | System status |
-| POST | `/ingest` | Index documents |
-| POST | `/ask` | Ask a question |
-| POST | `/evaluate` | Run evaluation suite |
-| GET | `/stats` | Index statistics |
-
-## LLM Setup (Optional)
-
-For full answer generation, install [Ollama](https://ollama.ai):
-```bash
-# Install Ollama, then:
-ollama pull mistral:7b-instruct
-```
-Without Ollama, the system returns retrieved context as the answer (retrieval still works fully).
-
-## Technologies
-
-- **Embedding**: `paraphrase-multilingual-MiniLM-L12-v2` (50+ languages, 384-dim)
-- **Vector DB**: FAISS (IndexFlatIP, cosine similarity)
-- **LLM**: Ollama (Mistral 7B / Phi-3 Mini)
-- **API**: FastAPI + Uvicorn
-- **Languages**: Python 3.10+

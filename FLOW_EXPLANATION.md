@@ -1,6 +1,38 @@
 # Multilingual RAG System — Complete Flow Explanation
 
-## Input Example: `"Modi ji ka education kya hai?"` (What is Modi's education?)
+This document traces the **exact code path** for every query — showing which file,
+function, and variable is touched at each stage. Two flows are covered:
+
+1. **Local Knowledge Flow** (`POST /ask`) — answers from ingested corpus files
+2. **Open-Domain Web Search Flow** (`POST /ask-web`) — answers from live internet search
+
+---
+
+## Table of Contents
+
+- [Step 0 — Server Startup](#step-0--server-startup)
+- [Step 1 — Document Ingestion (POST /ingest)](#step-1--document-ingestion-post-ingest)
+- [FLOW A — Local Knowledge (POST /ask)](#flow-a--local-knowledge-post-ask)
+  - [Step A1 — Language Detection](#step-a1--language-detection)
+  - [Step A2 — Query Normalization](#step-a2--query-normalization)
+  - [Step A3 — Embed Query](#step-a3--embed-query)
+  - [Step A4 — FAISS Search](#step-a4--faiss-search)
+  - [Step A5 — Hybrid Search](#step-a5--hybrid-search)
+  - [Step A6 — Deduplicate](#step-a6--deduplicate)
+  - [Step A7 — Rerank](#step-a7--rerank)
+  - [Step A8 — Build Prompt](#step-a8--build-prompt)
+  - [Step A9 — LLM Generation](#step-a9--llm-generation)
+  - [Step A10 — Build Response](#step-a10--build-response)
+- [FLOW B — Web Search (POST /ask-web)](#flow-b--web-search-post-ask-web)
+  - [Step B1 — Language Detection & Normalization](#step-b1--language-detection--normalization)
+  - [Step B2 — Query Translation to English](#step-b2--query-translation-to-english)
+  - [Step B3 — DuckDuckGo Web Search](#step-b3--duckduckgo-web-search)
+  - [Step B4 — Embed Web Chunks On-The-Fly](#step-b4--embed-web-chunks-on-the-fly)
+  - [Step B5 — Hybrid Search Within Web Results](#step-b5--hybrid-search-within-web-results)
+  - [Step B6 — Web-Aware Prompt & LLM Generation](#step-b6--web-aware-prompt--llm-generation)
+  - [Step B7 — Build Web Response](#step-b7--build-web-response)
+- [Complete Data Flow Diagrams](#complete-data-flow-diagrams)
+- [File Responsibility Map](#file-responsibility-map)
 
 ---
 
@@ -15,6 +47,7 @@ When you run `python -m backend.app`:
    - `CHUNK_SIZE = 500`, `CHUNK_OVERLAP = 50`
    - `RETRIEVAL_TOP_K = 5`, `SEMANTIC_WEIGHT_ALPHA = 0.7`, `KEYWORD_WEIGHT_BETA = 0.3`
    - `OLLAMA_MODEL = "mistral"`, `OLLAMA_TIMEOUT = 120`
+   - `WEB_SEARCH_MAX_RESULTS = 8`, `WEB_SEARCH_REGION = "in-en"`
    - Creates directories: `data/raw/`, `data/processed/`, `data/index/`
 
 2. **`startup()` event** in `app.py` triggers:
@@ -22,6 +55,9 @@ When you run `python -m backend.app`:
    - Calls `indexer.load()` from `ingestion/indexer.py` → reads `data/index/faiss.index` + `metadata.pkl` (21 vectors)
 
 3. FastAPI server starts on `http://0.0.0.0:8000` with HTML UI at `/`
+   - The UI has a **Local / Web** mode toggle
+   - Local mode sends queries to `POST /ask`
+   - Web mode sends queries to `POST /ask-web`
 
 ---
 
@@ -124,13 +160,19 @@ Function: indexer.save()
 
 ---
 
-## Step 2 — Question Answering (POST /ask)
+# FLOW A — Local Knowledge (POST /ask)
 
-User types **"Modi ji ka education kya hai?"** and clicks **Ask**.
+## Input Example: `"Modi ji ka education kya hai?"` (What is Modi's education?)
+
+User types the query and clicks **Ask** (Local Knowledge mode).
 
 The browser sends `POST /ask {"query": "Modi ji ka education kya hai?"}` to `app.py`.
 
-### 2a. Language Detection — `processing/language_detect.py`
+---
+
+### Step A1 — Language Detection
+
+**File:** `processing/language_detect.py`
 
 ```
 Function: detect_language("Modi ji ka education kya hai?")
@@ -161,7 +203,9 @@ Ratio: 4/6 = 0.667
 
 **Output:** `("mixed", 1.0)`
 
-### 2b. Query Normalization — `processing/normalize.py`
+### Step A2 — Query Normalization
+
+**File:** `processing/normalize.py`
 
 ```
 Function: normalize_query("Modi ji ka education kya hai?")
@@ -211,7 +255,9 @@ After removal: "Modi ji education kya"
 }
 ```
 
-### 2c. Embed Query — `ingestion/embedder.py`
+### Step A3 — Embed Query
+
+**File:** `ingestion/embedder.py`
 
 ```
 Function: embedding_model.embed_query(expanded_query)
@@ -222,7 +268,9 @@ Function: embedding_model.embed_query(expanded_query)
 - Passes through 12 transformer layers → mean pooling → L2 normalize
 - **Output:** 1D vector of shape `(384,)`, dtype float32
 
-### 2d. FAISS Search — `ingestion/indexer.py`
+### Step A4 — FAISS Search
+
+**File:** `ingestion/indexer.py`
 
 ```
 Function: indexer.search(query_vector, top_k=10)
@@ -246,7 +294,9 @@ Function: indexer.search(query_vector, top_k=10)
   ]
   ```
 
-### 2e. Hybrid Search — `retrieval/search.py`
+### Step A5 — Hybrid Search
+
+**File:** `retrieval/search.py`
 
 ```
 Function: hybrid_search(semantic_results, "Modi ji ka education kya hai?", α=0.7, β=0.3)
@@ -280,7 +330,9 @@ Result 3: chunk from indian_education.txt (semantic_score=0.51)
 
 **Step 3: Sort** by `final_score` descending → 6 results pass threshold
 
-### 2f. Deduplicate — `retrieval/search.py`
+### Step A6 — Deduplicate
+
+**File:** `retrieval/search.py`
 
 ```
 Function: deduplicate_results(hybrid_results, similarity_threshold=0.95)
@@ -291,7 +343,9 @@ Function: deduplicate_results(hybrid_results, similarity_threshold=0.95)
 - If token overlap > 95%, the lower-scored one is removed
 - **Output:** 2 unique results remain
 
-### 2g. Rerank — `retrieval/rerank.py`
+### Step A7 — Rerank
+
+**File:** `retrieval/rerank.py`
 
 ```
 Function: rerank_results(results, query_topic=None, max_per_source=3, top_k=5)
@@ -311,10 +365,12 @@ Function: rerank_results(results, query_topic=None, max_per_source=3, top_k=5)
 
 **Output:** Final 2 chunks ready for the LLM
 
-### 2h. Build Prompt — `generation/prompt.py`
+### Step A8 — Build Prompt
+
+**File:** `generation/prompt.py`
 
 ```
-Function: build_prompt("Modi ji ka education kya hai?", final_results, "mixed")
+Function: build_prompt_for_ollama("Modi ji ka education kya hai?", final_results, "mixed")
 ```
 
 **Step 1: `build_context_block(results)`** — formats chunks:
@@ -327,9 +383,9 @@ He then pursued a Master's in Political Science from Gujarat University...
 India's education system has evolved significantly with NEP 2020...
 ```
 
-**Step 2:** Combines with `SYSTEM_PROMPT`:
+**Step 2:** Uses the `SYSTEM_PROMPT`:
 ```
-System: You are a helpful multilingual question-answering assistant...
+You are a helpful multilingual question-answering assistant...
 STRICT RULES:
 1. ONLY use the information provided in the CONTEXT below
 2. Do NOT use any external knowledge
@@ -337,25 +393,22 @@ STRICT RULES:
 4. Always mention source file(s)
 5. Keep answer concise (2-4 sentences)
 ...
-
-CONTEXT:
-[Source: modi.txt | Relevance: 0.80]
-Modi completed his higher secondary education in Vadnagar...
-
-[Source: indian_education.txt | Relevance: 0.43]
-India's education system has evolved significantly...
-
-QUESTION: Modi ji ka education kya hai?
-
-Answer (cite sources, be factual):
 ```
 
 **Step 3:** Adds language instruction — since `lang="mixed"`, adds:
 *"The question is in Hindi-English code-mixed. You may respond in the same style."*
 
-**Output:** Complete prompt string
+**Step 4:** Builds chat messages list:
+```python
+[
+    {"role": "system", "content": "You are a helpful multilingual..."},
+    {"role": "user", "content": "CONTEXT:\n[Source: modi.txt]...\n\nQUESTION: Modi ji ka education kya hai?\n\nAnswer concisely using ONLY the context above. Cite source files."}
+]
+```
 
-### 2i. LLM Generation — `generation/llm.py`
+### Step A9 — LLM Generation
+
+**File:** `generation/llm.py`
 
 ```
 Function: generate_answer(query, results, "mixed")
@@ -396,7 +449,9 @@ Internally creates an `OllamaLLM` instance and:
 }
 ```
 
-### 2j. Build Response — `backend/app.py`
+### Step A10 — Build Response
+
+**File:** `backend/app.py`
 
 The `/ask` endpoint assembles the final `AskResponse`:
 
@@ -436,7 +491,351 @@ This JSON is sent to the browser, where the JavaScript `renderAnswer(d)` functio
 
 ---
 
-## Complete Data Flow Summary
+# FLOW B — Web Search (POST /ask-web)
+
+## Input Example: `"Elon Musk ki net worth kitni hai?"` (What is Elon Musk's net worth?)
+
+This question **cannot** be answered from local corpus files — it requires real-time web data.
+
+User switches to **🌐 Web Search** mode in the UI and clicks **Search**.
+
+The browser sends `POST /ask-web {"query": "Elon Musk ki net worth kitni hai?"}` to `app.py`.
+
+---
+
+### Step B1 — Language Detection & Normalization
+
+**Files:** `processing/language_detect.py` + `processing/normalize.py`
+
+```
+Function: normalize_query("Elon Musk ki net worth kitni hai?")
+```
+
+This follows the same Steps A1–A2 from the local flow:
+
+**Language Detection:**
+```
+Tokens: ["elon", "musk", "ki", "net", "worth", "kitni", "hai"]
+Check against ROMANIZED_HINDI_WORDS set:
+  "ki"    → ✅ IN set
+  "kitni" → ✅ IN set
+  "hai"   → ✅ IN set
+Hindi count: 3, Total tokens: 7
+Ratio: 3/7 = 0.43
+0.43 > MIXED_THRESHOLD (0.15) → language = "mixed", confidence = 0.93
+```
+
+**Normalization:**
+```
+Transliterate: "Elon Musk की net worth कितनी है?"
+Expand: "Elon Musk ki net worth kitni hai? Elon Musk की net worth कितनी है?"
+```
+
+**Output:**
+```python
+{
+    "original": "Elon Musk ki net worth kitni hai?",
+    "language": "mixed",
+    "confidence": 0.93,
+    "normalized": "Elon Musk ki net worth kitni hai? Elon Musk की net worth कितनी है?",
+    "transliterated": "Elon Musk की net worth कितनी है?"
+}
+```
+
+### Step B2 — Query Translation to English
+
+**File:** `processing/translate.py`
+
+```
+Function: get_search_query("Elon Musk ki net worth kitni hai?", "mixed")
+```
+
+**Why translate?** DuckDuckGo returns MUCH better results for English queries.
+"Elon Musk ki net worth kitni hai?" → poor results.
+"What is Elon Musk's net worth?" → excellent results from Forbes, Bloomberg, etc.
+
+**Step 1:** Language is not `"en"`, so we proceed with translation.
+
+**Step 2: Try Ollama translation** via `translate_with_ollama()`:
+```
+1. Check Ollama available: GET http://localhost:11434/api/tags → 200 OK ✅
+2. Build translation prompt:
+   "Translate the following query to English.
+    Only output the English translation, nothing else.
+    Keep proper nouns (names, places, organizations) as-is.
+
+    Query: Elon Musk ki net worth kitni hai?
+
+    English translation:"
+
+3. POST http://localhost:11434/api/generate
+   model: "mistral"
+   stream: false
+   temperature: 0.0  (deterministic translation)
+   num_predict: 100  (short output)
+   timeout: 60s      (capped for translation, not full 120s)
+
+4. Response: "What is Elon Musk's net worth?"
+5. Clean up: strip quotes, remove "Translation:" prefix if present
+```
+
+**Step 3: Return** — `"What is Elon Musk's net worth?"`
+
+**Fallback path** (if Ollama is unavailable):
+```
+Function: extract_keywords_for_search("Elon Musk ki net worth kitni hai?")
+
+Tokens: ["Elon", "Musk", "ki", "net", "worth", "kitni", "hai?"]
+Remove ALL_STOPWORDS (Hindi + Telugu + English stopwords):
+  "ki"    → IN stopwords → REMOVE
+  "kitni" → IN stopwords → REMOVE
+  "hai?"  → IN stopwords → REMOVE
+  
+Result: "Elon Musk net worth"
+```
+Even the fallback produces a decent search query!
+
+### Step B3 — DuckDuckGo Web Search
+
+**File:** `ingestion/web_search.py`
+
+```
+Function: search_and_prepare(
+    query="Elon Musk ki net worth kitni hai?",
+    english_query="What is Elon Musk's net worth?",
+    max_results=8
+)
+```
+
+**Step 1: `search_web()`** — calls DuckDuckGo:
+```python
+with DDGS() as ddgs:
+    results = ddgs.text(
+        keywords="What is Elon Musk's net worth?",
+        region="in-en",        # India-English for regional relevance
+        max_results=8,
+        safesearch="moderate"
+    )
+```
+
+**Step 2:** Parse results → filter out snippets shorter than 20 chars:
+```
+Result 1: WebResult(
+    title="Elon Musk Net Worth | Celebrity Net Worth",
+    snippet="Elon Musk is the wealthiest person in the world, with an estimated net worth of...",
+    url="https://www.celebritynetworth.com/richest-businessmen/ceos/elon-musk-net-worth/",
+    source="celebritynetworth.com"
+)
+Result 2: WebResult(
+    title="Elon Musk - Forbes",
+    snippet="Browse today's rankings of the wealthiest people...",
+    url="https://www.forbes.com/profile/elon-musk/",
+    source="forbes.com"
+)
+... (6 more results from businessinsider.com, bloomberg.com, etc.)
+```
+
+**Step 3: `web_results_to_chunks()`** — convert to RAG-compatible chunk dicts:
+```python
+[
+    {
+        "text": "Elon Musk Net Worth | Celebrity Net Worth\nElon Musk is the wealthiest...",
+        "source": "celebritynetworth.com",
+        "url": "https://www.celebritynetworth.com/...",
+        "topic": "web",
+        "chunk_id": "web_0"
+    },
+    {
+        "text": "Elon Musk - Forbes\nBrowse today's rankings...",
+        "source": "forbes.com",
+        "url": "https://www.forbes.com/profile/elon-musk/",
+        "topic": "web",
+        "chunk_id": "web_1"
+    },
+    ... # 6 more chunks
+]
+```
+
+**Step 4: Retry** — if no results (e.g., translation was bad), retries with original Hindi query.
+
+**Output:** `List[Dict]` — 8 web chunks ready for embedding.
+
+**Timing:** ~1,000–2,000ms for DuckDuckGo search.
+
+### Step B4 — Embed Web Chunks On-The-Fly
+
+**File:** `backend/app.py` → `/ask-web` endpoint + `ingestion/embedder.py` + `ingestion/indexer.py`
+
+```python
+# Step 1: Embed all web chunk texts
+chunk_texts = [c["text"] for c in web_chunks]  # 8 texts
+vectors = embedding_model.embed(chunk_texts)    # → shape (8, 384)
+
+# Step 2: Build TEMPORARY FAISS index (NOT saved to disk)
+temp_indexer = FAISSIndexer()
+temp_indexer.build_index(vectors, web_chunks)
+# Creates faiss.IndexFlatIP(384), adds 8 vectors
+
+# Step 3: Embed the normalized query
+query_vector = embedding_model.embed_query(normalized_query)
+# → shape (384,)
+
+# Step 4: Search within web chunks
+semantic_results = temp_indexer.search(query_vector, top_k=8)
+# → cosine similarity of query vs each web chunk
+```
+
+**Key difference from local flow:** The FAISS index is ephemeral — created per request and discarded. This keeps web results fresh and doesn't pollute the local index.
+
+**Output:** 8 semantic results sorted by cosine similarity to the query.
+
+**Timing:** ~300–600ms for embedding + temporary index creation.
+
+### Step B5 — Hybrid Search Within Web Results
+
+**Files:** `retrieval/search.py` + `retrieval/rerank.py`
+
+The **same hybrid search + rerank pipeline** from the local flow is applied:
+
+```
+Step 1: hybrid_search(semantic_results, original_query, α=0.7, β=0.3)
+  - Extract keywords: ["elon", "musk", "net", "worth"]
+  - For each web chunk:
+    final_score = 0.7 × semantic_score + 0.3 × keyword_overlap
+  - Filter below 0.25 threshold
+  - Sort by final_score → 7 results
+
+Step 2: deduplicate_results(hybrid_results)
+  - Compare token overlap between web chunks
+  - Remove duplicates (>95% overlap) → 7 results remain
+  (Web results are usually unique since they come from different websites)
+
+Step 3: rerank_results(deduped_results, top_k=5)
+  - All web chunks have topic="web", so no topic boost applies
+  - Source diversity: all from different domains → no filtering needed
+  - Trim to top_k=5
+```
+
+**Output:** Top 5 web chunks, ranked by relevance.
+
+### Step B6 — Web-Aware Prompt & LLM Generation
+
+**Files:** `generation/prompt.py` + `generation/llm.py`
+
+```
+Function: build_web_prompt_for_ollama(query, final_results, "mixed")
+```
+
+**Step 1: `build_context_block(results)`** — formats web chunks WITH URLs:
+```
+[Source: celebritynetworth.com | URL: https://www.celebritynetworth.com/... | Relevance: 0.76]
+Elon Musk Net Worth | Celebrity Net Worth
+Elon Musk is the wealthiest person in the world, with an estimated net worth of...
+
+[Source: forbes.com | URL: https://www.forbes.com/profile/elon-musk/ | Relevance: 0.73]
+Elon Musk - Forbes
+Browse today's rankings of the wealthiest people and families globally...
+
+[Source: businessinsider.com | URL: https://www.businessinsider.com/... | Relevance: 0.71]
+...
+```
+
+**Step 2:** Uses `WEB_SYSTEM_PROMPT` (different from local SYSTEM_PROMPT):
+```
+You are a helpful multilingual question-answering assistant
+that answers questions using web search results.
+
+STRICT RULES:
+1. ONLY use the information provided in the WEB SEARCH RESULTS below
+2. Do NOT add information beyond what is in the search results
+3. If the search results don't have enough info, say so
+4. Always mention which website(s) your answer is based on (cite domain names)
+5. Keep your answer concise and factual (3-5 sentences maximum)
+6. If the question is in Hindi, Telugu, or code-mixed, you may answer in same style
+7. Never make up facts not in the search results
+```
+
+**Step 3:** Language instruction for "mixed" → "You may respond in Hindi-English mix."
+
+**Step 4: LLM Generation:**
+```python
+llm = OllamaLLM()
+messages = [
+    {"role": "system", "content": WEB_SYSTEM_PROMPT},
+    {"role": "user", "content": "WEB SEARCH RESULTS:\n[Source: celebritynetworth.com | URL: ...]...\n\nQUESTION: Elon Musk ki net worth kitni hai?\n\nAnswer concisely using ONLY the web search results above. Cite website names."}
+]
+llm_result = llm.generate(messages=messages)
+```
+
+**Response from Mistral:**
+```
+"Elon Musk ki net worth approximately $638 billion hai,
+as per fortune.com."
+```
+
+**Fallback** (if Ollama unavailable): Returns raw web snippets with domain names.
+
+### Step B7 — Build Web Response
+
+**File:** `backend/app.py`
+
+The `/ask-web` endpoint assembles the `AskWebResponse`:
+
+```python
+AskWebResponse(
+    answer="Elon Musk ki net worth approximately $638 billion hai, as per fortune.com.",
+    sources=["forbes.com", "celebritynetworth.com", "businessinsider.com", "fortune.com", "aol.com"],
+    web_urls=[
+        "https://www.celebritynetworth.com/richest-businessmen/ceos/elon-musk-net-worth/",
+        "https://www.businessinsider.com/elon-musk-net-worth",
+        "https://www.aol.com/articles/elon-musk-net-worth-hits-143107231.html",
+        "https://finance.yahoo.com/news/elon-musk-net-worth-large-203110925.html",
+        "https://fortune.com/2025/12/16/elon-musk-wealth-soared-past-600-billion..."
+    ],
+    query_info={
+        "original": "Elon Musk ki net worth kitni hai?",
+        "language": "mixed",
+        "language_label": "Code-Mixed (Hindi-English)",
+        "confidence": 0.93,
+        "normalized": "Elon Musk ki net worth kitni hai? Elon Musk की net worth कितनी है?",
+        "english_query": "What is Elon Musk's net worth?",
+        "transliterated": "Elon Musk की net worth कितनी है?"
+    },
+    search_info={
+        "web_results_fetched": 8,
+        "semantic_results": 8,
+        "hybrid_results": 7,
+        "deduped_results": 7,
+        "final_results": 5,
+        "top_sources": ["celebritynetworth.com", "businessinsider.com", ...],
+        "top_scores": [0.758, 0.732, 0.710, 0.688, 0.680]
+    },
+    generation_info={
+        "model": "mistral",
+        "llm_used": True,
+        "normalization_ms": 2,
+        "translation_ms": 15675,
+        "web_search_ms": 1292,
+        "embedding_ms": 522,
+        "rerank_ms": 1,
+        "generation_ms": 80720,
+        "total_ms": 98212
+    }
+)
+```
+
+The browser's `renderWebAnswer(d)` function displays:
+- Answer card with 🌐 Web Search Answer header
+- Clickable source URLs as reference links
+- Query analysis with the English translation shown
+- Web Search Pipeline stats (results fetched → semantic → hybrid → final)
+- Performance timing bar (Normalize → Translate → Web Search → Embed+Search → Rerank → Generate)
+
+---
+
+## Complete Data Flow Diagrams
+
+### Flow A — Local Knowledge
 
 ```
 "Modi ji ka education kya hai?"
@@ -463,7 +862,7 @@ This JSON is sent to the browser, where the JavaScript `renderAnswer(d)` functio
     rerank.py ──→ topic boost + source diversity → 2 final chunks
          │
          ▼
-    prompt.py ──→ anti-hallucination prompt with context blocks
+    prompt.py ──→ SYSTEM_PROMPT + anti-hallucination prompt with context blocks
          │
          ▼
     llm.py ──→ Ollama Mistral 7B → grounded answer with source citation
@@ -472,23 +871,81 @@ This JSON is sent to the browser, where the JavaScript `renderAnswer(d)` functio
     app.py ──→ JSON response with answer + metadata + timings
 ```
 
+### Flow B — Web Search
+
+```
+"Elon Musk ki net worth kitni hai?"
+         │
+         ▼
+    language_detect.py ──→ "mixed" (0.43 Hindi ratio)
+         │
+         ▼
+    normalize.py ──→ "Elon Musk ki net worth kitni hai? Elon Musk की net worth कितनी है?"
+         │
+         ▼
+    translate.py ──→ "What is Elon Musk's net worth?" (via Ollama or keyword fallback)
+         │
+         ▼
+    web_search.py ──→ DuckDuckGo search → 8 web results (forbes, bloomberg, wiki...)
+         │
+         ▼
+    embedder.py ──→ embed 8 web snippets → shape (8, 384)
+         │
+         ▼
+    indexer.py ──→ TEMPORARY FAISS index → cosine similarity → 8 hits
+         │
+         ▼
+    search.py ──→ hybrid scoring (0.7×semantic + 0.3×keyword) → 7 hits
+         │
+         ▼
+    rerank.py ──→ source diversity → 5 final web chunks
+         │
+         ▼
+    prompt.py ──→ WEB_SYSTEM_PROMPT + web context blocks (with URLs)
+         │
+         ▼
+    llm.py ──→ Ollama Mistral 7B → grounded answer citing website names
+         │
+         ▼
+    app.py ──→ JSON response with answer + web_urls + timings
+```
+
+---
+
+## Key Differences: Local vs Web Flow
+
+| Aspect | Local (`/ask`) | Web (`/ask-web`) |
+|--------|---------------|-----------------|
+| **Data Source** | Pre-ingested corpus files | Live DuckDuckGo search results |
+| **Requires /ingest** | Yes — index must be built first | No — works without any local data |
+| **Translation Step** | Not needed | Translates query to English for better search |
+| **FAISS Index** | Persistent (saved to disk) | Temporary (per-request, discarded) |
+| **Context Block** | `[Source: filename.txt]` | `[Source: domain.com | URL: https://...]` |
+| **System Prompt** | `SYSTEM_PROMPT` (cite files) | `WEB_SYSTEM_PROMPT` (cite websites) |
+| **Source Citations** | File names: `modi.txt` | Domain names: `forbes.com` |
+| **Response Links** | None | Clickable URLs to original web pages |
+| **Latency** | ~90s (mostly LLM) | ~100s (translation + search + LLM) |
+| **New Files Used** | — | `translate.py`, `web_search.py` |
+
 ---
 
 ## File Responsibility Map
 
-| File | Folder | Role |
-|------|--------|------|
-| `config.py` | `backend/` | Central settings — all tunable parameters |
-| `app.py` | `backend/` | FastAPI server — orchestrates all modules |
-| `loader.py` | `ingestion/` | Reads raw files → `Document` objects |
-| `chunker.py` | `ingestion/` | Splits documents → overlapping `Chunk` objects |
-| `embedder.py` | `ingestion/` | Converts text → 384-dim vectors (MiniLM-L12-v2) |
-| `indexer.py` | `ingestion/` | FAISS index — build, save, load, search |
-| `language_detect.py` | `processing/` | Detects language: en/hi/te/mixed |
-| `normalize.py` | `processing/` | Transliterate + expand + remove stopwords |
-| `search.py` | `retrieval/` | Hybrid scoring (semantic + keyword) + dedup |
-| `rerank.py` | `retrieval/` | Topic boost + source diversity |
-| `prompt.py` | `generation/` | Anti-hallucination prompt construction |
-| `llm.py` | `generation/` | Ollama client — sends prompt, gets answer |
-| `metrics.py` | `evaluation/` | Recall@k, Precision@k, MRR, hallucination check |
-| `benchmarks.py` | `evaluation/` | Ablation study framework |
+| File | Folder | Role | Used By |
+|------|--------|------|---------|
+| `config.py` | `backend/` | Central settings — all tunable parameters | Both flows |
+| `app.py` | `backend/` | FastAPI server — `/`, `/ask`, `/ask-web`, `/ingest`, `/health` | Both flows |
+| `loader.py` | `ingestion/` | Reads raw files → `Document` objects | Local only |
+| `chunker.py` | `ingestion/` | Splits documents → overlapping `Chunk` objects | Local only |
+| `embedder.py` | `ingestion/` | Converts text → 384-dim vectors (MiniLM-L12-v2) | Both flows |
+| `indexer.py` | `ingestion/` | FAISS index — build, save, load, search | Both flows |
+| `web_search.py` | `ingestion/` | DuckDuckGo search → web chunks | Web only |
+| `language_detect.py` | `processing/` | Detects language: en/hi/te/mixed | Both flows |
+| `normalize.py` | `processing/` | Transliterate + expand + remove stopwords | Both flows |
+| `translate.py` | `processing/` | Translates Hindi/Telugu queries to English for search | Web only |
+| `search.py` | `retrieval/` | Hybrid scoring (semantic + keyword) + dedup | Both flows |
+| `rerank.py` | `retrieval/` | Topic boost + source diversity | Both flows |
+| `prompt.py` | `generation/` | SYSTEM_PROMPT + WEB_SYSTEM_PROMPT + context blocks | Both flows |
+| `llm.py` | `generation/` | Ollama client — sends prompt, gets answer | Both flows |
+| `metrics.py` | `evaluation/` | Recall@k, Precision@k, MRR, hallucination check | Evaluation |
+| `benchmarks.py` | `evaluation/` | Ablation study framework | Evaluation |
