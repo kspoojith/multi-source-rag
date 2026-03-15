@@ -155,8 +155,8 @@ def process_query(system, query: str, use_cache: bool = True) -> Dict[str, Any]:
         
         # 4. Embedding
         t0 = time.time()
-        query_embedding = system["model"].get_embeddings([normalized_query])[0]
-        doc_embeddings = system["model"].get_embeddings([d["content"] for d in documents])
+        query_embedding = system["model"].embed([normalized_query])[0]
+        doc_embeddings = system["model"].embed([d["content"] for d in documents])
         timings["embedding"] = time.time() - t0
         
         # 5. Hybrid Retrieval
