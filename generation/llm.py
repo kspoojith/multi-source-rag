@@ -251,8 +251,6 @@ def generate_answer(
     Returns:
         Dict with answer, sources, latency, and metadata
     """
-    from generation.prompt import build_prompt_for_ollama, build_prompt
-
     # If no relevant results, return a "no context" response
     if not results:
         return {
@@ -272,11 +270,13 @@ def generate_answer(
         # Use Groq API (cloud deployment)
         try:
             from generation.llm_groq import GroqLLM
+            from generation.prompt import build_web_prompt_for_ollama
             
             logger.info("Using Groq API for LLM generation")
             groq_llm = GroqLLM(api_key=GROQ_API_KEY, model=GROQ_MODEL)
             
-            messages = build_prompt_for_ollama(query, results, language)  # Same format works for Groq
+            # Use web search prompt (better for web results)
+            messages = build_web_prompt_for_ollama(query, results, language)
             groq_result = groq_llm.generate(
                 messages=messages,
                 temperature=GROQ_TEMPERATURE,
@@ -302,8 +302,10 @@ def generate_answer(
     # Try Ollama (local deployment) - default or fallback
     llm = OllamaLLM()
     if llm.is_available():
+        from generation.prompt import build_web_prompt_for_ollama
         logger.info("Using Ollama for LLM generation")
-        messages = build_prompt_for_ollama(query, results, language)
+        # Use web search prompt (better for web results)
+        messages = build_web_prompt_for_ollama(query, results, language)
         llm_result = llm.generate(messages=messages)
 
         return {
