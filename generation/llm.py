@@ -75,11 +75,16 @@ class OllamaLLM:
             if response.status_code == 200:
                 models = response.json().get("models", [])
                 model_names = [m.get("name", "") for m in models]
+                
                 # Check if our model (or a variant) is available
+                # Handle both "mistral" and "mistral:latest" formats
+                model_base = self.model.split(":")[0]
                 for name in model_names:
-                    if self.model.split(":")[0] in name:
-                        logger.info(f"Ollama model '{self.model}' is available")
+                    name_base = name.split(":")[0]
+                    if model_base == name_base or name == self.model:
+                        logger.info(f"Ollama model '{self.model}' is available (found: {name})")
                         return True
+                
                 logger.warning(
                     f"Ollama is running but model '{self.model}' not found. "
                     f"Available: {model_names}. "

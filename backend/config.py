@@ -31,11 +31,9 @@ EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 EMBEDDING_DIMENSION = 384  # Output vector size of the chosen model
 
 # ─── Chunking ────────────────────────────────────────────────────────────────
-# Chunk size controls how much context each vector represents.
-# Too small → loses context. Too large → dilutes relevance.
-# 500 chars with 50-char overlap is a good starting point for QA.
-CHUNK_SIZE = 500          # characters per chunk
-CHUNK_OVERLAP = 50        # overlap between consecutive chunks
+# CPU-optimized chunking: smaller chunks = less text for LLM
+CHUNK_SIZE = 300          # Reduced from 500 for speed
+CHUNK_OVERLAP = 40        # Reduced from 50
 MIN_CHUNK_LENGTH = 30     # discard very short chunks (headings, noise)
 
 # ─── FAISS Index ──────────────────────────────────────────────────────────────
@@ -47,18 +45,19 @@ FAISS_INDEX_TYPE = "FlatIP"  # Options: FlatIP, IVFFlat
 
 # ─── Retrieval ────────────────────────────────────────────────────────────────
 # Hybrid scoring: Final = α * semantic_score + β * keyword_boost
-# These are the initial values; we'll tune them in experiments.
-RETRIEVAL_TOP_K = 5                # Number of candidates to retrieve
+# Optimized for phi3:mini on CPU
+RETRIEVAL_TOP_K = 3                # 3 chunks for better context
 SEMANTIC_WEIGHT_ALPHA = 0.7        # Weight for cosine similarity
 KEYWORD_WEIGHT_BETA = 0.3          # Weight for keyword match boost
 SIMILARITY_THRESHOLD = 0.25        # Minimum score to consider relevant
 
 # ─── LLM (Ollama) ────────────────────────────────────────────────────────────
 # Ollama runs models locally. mistral:7b-instruct is our primary model.
-# phi3:mini is the lightweight alternative for latency experiments.
+# For lower latency, use: phi3:mini (3B params, 50% faster) - run: ollama pull phi3:mini
+# For better quality: mistral:7b-instruct
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
-OLLAMA_TIMEOUT = 120  # seconds (CPU inference needs more time)
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
+OLLAMA_TIMEOUT = 300  # seconds (5 minutes for CPU - increased from 180s)
 OLLAMA_TEMPERATURE = 0.1  # Low temp = more factual, less creative
 
 # ─── Language Processing ─────────────────────────────────────────────────────
@@ -69,10 +68,11 @@ ENABLE_STOPWORD_REMOVAL = True
 
 # ─── Web Search (Open-Domain QA) ─────────────────────────────────────────────
 # DuckDuckGo-based web search for answering ANY question in the world.
-# No API keys needed. Results are chunked + embedded on-the-fly.
-WEB_SEARCH_MAX_RESULTS = 8     # Number of web results to fetch per query
-WEB_SEARCH_REGION = "in-en"    # DuckDuckGo region (India-English)
-WEB_SEARCH_ENABLED = True      # Master toggle for web search feature
+# AGGRESSIVE CPU OPTIMIZATION: Minimal results
+WEB_SEARCH_MAX_RESULTS = 4     # MINIMUM: 4 results (was 6)
+WEB_SEARCH_REGION = "wt-wt"    # Worldwide
+WEB_SEARCH_ENABLED = True      # Master toggle
+WEB_SEARCH_TIMEOUT = 10        # seconds
 
 # ─── API Server ───────────────────────────────────────────────────────────────
 API_HOST = "0.0.0.0"

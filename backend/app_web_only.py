@@ -25,7 +25,6 @@ import sys
 import time
 import logging
 import hashlib
-import numpy as np
 from pathlib import Path
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -141,11 +140,6 @@ async def lifespan(app: FastAPI):
     # Load embedding model
     logger.info("📦 Loading embedding model...")
     embedding_model = get_embedding_model()
-    
-    # Clear any old cache on startup
-    query_cache.clear()
-    logger.info("🗑️  Cache cleared on startup")
-    
     logger.info("✅ System ready - answer ANY question from the web!")
     
     yield
@@ -550,11 +544,12 @@ async def ask(request: AskRequest):
     try:
         # Step 1: Language detection & normalization
         t0 = time.time()
-        norm_result = normalize_query(request.query)
-        lang_code = norm_result["language"]
+        lang_info = detect_language(request.query)
+        lang_code = lang_info["language"]
         lang_label = get_language_label(lang_code)
-        confidence = norm_result["confidence"]
-        normalized_query = norm_result["normalized"]
+        confidence = lang_info["confidence"]
+        
+        normalized_query = normalize_query(request.query, lang_code)
         timing["normalization_ms"] = (time.time() - t0) * 1000
         
         logger.info(
@@ -571,10 +566,10 @@ async def ask(request: AskRequest):
         
         # Step 3: Web search
         t0 = time.time()
-        web_chunks = search_and_prepare(
-            query=normalized_query,
-            english_query=english_query,
+        web_results, web_chunks, web_urls = search_and_prepare(
+            query=english_query,
             max_results=request.max_web_results,
+            embedding_model=embedding_model,
         )
         timing["web_search_ms"] = (time.time() - t0) * 1000
         
@@ -586,28 +581,7 @@ async def ask(request: AskRequest):
         
         logger.info(f"[Web] Got {len(web_chunks)} web chunks")
         
-        # Extract URLs for response
-        web_urls = [chunk.get("url", "") for chunk in web_chunks if chunk.get("url")]
-        
-        # Step 4: Embed query and web chunks
-        t0 = time.time()
-        # Embed the query
-        query_embedding = embedding_model.embed([normalized_query])[0]
-        
-        # Embed chunks
-        chunk_texts = [chunk["text"] for chunk in web_chunks]
-        chunk_embeddings = embedding_model.embed(chunk_texts)
-        
-        # Calculate cosine similarity and add scores
-        for chunk, chunk_embedding in zip(web_chunks, chunk_embeddings):
-            # Cosine similarity (embeddings are already normalized by the model)
-            similarity = float(np.dot(query_embedding, chunk_embedding))
-            chunk["score"] = similarity
-            chunk["embedding"] = chunk_embedding
-        
-        timing["embedding_ms"] = (time.time() - t0) * 1000
-        
-        # Step 5: Hybrid search within web results
+        # Step 4: Hybrid search within web results
         t0 = time.time()
         hybrid_results = hybrid_search(
             semantic_results=web_chunks,
@@ -619,24 +593,22 @@ async def ask(request: AskRequest):
         # Rerank
         reranked_results = rerank_results(
             results=hybrid_results,
-            query_topic=None,  # Web results don't have topics
-            max_per_source=3,
-            top_k=request.top_k * 2,  # Get more candidates, then filter to top_k
+            query=normalized_query,
+            language=lang_code,
         )
         
         # Take top-K
         final_results = reranked_results[:request.top_k]
-        timing["search_rerank_ms"] = (time.time() - t0) * 1000
+        timing["embedding_ms"] = (time.time() - t0) * 1000  # Includes search+rerank
         
-        # Step 6: LLM generation
+        # Step 5: LLM generation
         t0 = time.time()
-        gen_result = generate_answer(
+        answer, gen_info = generate_answer(
             query=request.query,
             results=final_results,
             language=lang_code,
         )
-        answer = gen_result["answer"]
-        timing["generation_ms"] = gen_result.get("latency_ms", 0)
+        timing["generation_ms"] = gen_info.get("latency_ms", 0)
         
         # Total timing
         timing["total_ms"] = (time.time() - start_time) * 1000
@@ -652,26 +624,25 @@ async def ask(request: AskRequest):
             "query_info": {
                 "original": request.query,
                 "normalized": normalized_query,
-                "transliterated": norm_result.get("transliterated"),
                 "english_query": english_query,
                 "language_label": lang_label,
                 "confidence": confidence,
             },
             "search_info": {
-                "web_results_fetched": len(web_chunks),
+                "web_results_fetched": len(web_results),
                 "semantic_results": len(web_chunks),
                 "hybrid_results": len(hybrid_results),
                 "final_results": len(final_results),
             },
             "generation_info": {
-                **gen_result,
+                **gen_info,
                 **timing,
             },
             "from_cache": False,
         }
         
         # Cache successful responses
-        if request.use_cache and gen_result.get("success", True):
+        if request.use_cache and gen_info.get("success") and not gen_info.get("error"):
             query_cache.set(request.query, response_data)
         
         return AskResponse(**response_data)

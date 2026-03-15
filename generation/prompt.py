@@ -31,22 +31,16 @@ from typing import List, Dict, Any
 logger = logging.getLogger(__name__)
 
 # ─── System Prompt ────────────────────────────────────────────────────────────
-# This is the "meta-instruction" that controls the LLM's behavior.
-# Every word is intentional — tested through prompt engineering iterations.
+# Optimized for CPU: Clear but concise to reduce generation time
 
-SYSTEM_PROMPT = """You are a helpful multilingual question-answering assistant for Indian public information.
+SYSTEM_PROMPT = """You are a helpful Q&A assistant. 
 
-STRICT RULES (you MUST follow these):
-1. ONLY use the information provided in the CONTEXT below to answer.
-2. Do NOT use any external knowledge or information not in the context.
-3. If the context does not contain enough information to answer, say: "I don't have enough information in the provided context to answer this question."
-4. Always mention which source file(s) your answer is based on.
-5. Keep your answer concise and factual (2-4 sentences maximum).
-6. If the question is in Hindi or code-mixed (Hindi-English), you may answer in the same language style.
-7. Never make up facts, dates, numbers, or names that are not in the context.
-8. If asked about something completely unrelated to the context, politely decline.
-
-You are grounded. You are factual. You cite sources."""
+Rules:
+1. Answer based ONLY on the context provided below
+2. If the context has the answer, provide it clearly in 2-3 sentences
+3. If the context doesn't have enough info, say "I don't have enough information"
+4. Cite the sources mentioned in the context
+5. Answer in the same language style as the question (Hindi/English mix is OK)"""
 
 
 def build_context_block(results: List[Dict[str, Any]]) -> str:
@@ -70,16 +64,13 @@ def build_context_block(results: List[Dict[str, Any]]) -> str:
     blocks = []
     for i, result in enumerate(results, 1):
         source = result.get("source", "unknown")
-        text = result.get("text", "")
-        score = result.get("final_score", result.get("score", 0))
+        text = result.get("text", "")[:400]  # Increased to 400 chars for more context
         url = result.get("url", "")
 
         if url:
-            # Web source — include URL for citation
-            blocks.append(f"[Source: {source} | URL: {url} | Relevance: {score:.2f}]\n{text}")
+            blocks.append(f"[{source}] {text}")
         else:
-            # Local file source
-            blocks.append(f"[Source: {source} | Relevance: {score:.2f}]\n{text}")
+            blocks.append(f"[{source}] {text}")
 
     return "\n\n".join(blocks)
 
@@ -108,26 +99,15 @@ def build_prompt(
     """
     context_block = build_context_block(results)
 
-    # Language-aware instruction
-    if language in ("hi", "mixed"):
-        lang_instruction = (
-            "The user's query is in Hindi/code-mixed language. "
-            "You may respond in a similar language style (Hindi-English mix) "
-            "if it helps the user understand better."
-        )
-    else:
-        lang_instruction = "Respond in clear English."
-
+    # Clear, concise prompt for fast generation
     prompt = f"""{SYSTEM_PROMPT}
 
-{lang_instruction}
-
-CONTEXT:
+Context:
 {context_block}
 
-USER QUESTION: {query}
+Question: {query}
 
-ANSWER (cite sources, be concise, ONLY use context above):"""
+Answer (2-3 sentences, cite sources):"""
 
     logger.debug(f"Prompt built: {len(prompt)} chars, {len(results)} context chunks")
     return prompt
