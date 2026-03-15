@@ -9,6 +9,16 @@ Key design decisions documented inline.
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# ─── Load Environment Variables ──────────────────────────────────────────────
+# Load .env file if it exists (for local development)
+env_path = Path(__file__).resolve().parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+    print(f"✅ Loaded environment variables from: {env_path}")
+else:
+    print(f"ℹ️  No .env file found at: {env_path} (using system environment variables)")
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 # All paths are relative to the project root so the system is portable.
@@ -51,14 +61,27 @@ SEMANTIC_WEIGHT_ALPHA = 0.7        # Weight for cosine similarity
 KEYWORD_WEIGHT_BETA = 0.3          # Weight for keyword match boost
 SIMILARITY_THRESHOLD = 0.25        # Minimum score to consider relevant
 
-# ─── LLM (Ollama) ────────────────────────────────────────────────────────────
-# Ollama runs models locally. mistral:7b-instruct is our primary model.
-# For lower latency, use: phi3:mini (3B params, 50% faster) - run: ollama pull phi3:mini
-# For better quality: mistral:7b-instruct
+# ─── LLM Configuration ──────────────────────────────────────────────────────
+# Supports both Ollama (local) and Groq API (cloud)
+# LLM_PROVIDER: "ollama" or "groq"
+# - Use "ollama" for local deployment (default)
+# - Use "groq" for Streamlit Cloud deployment (free tier available)
+
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")  # "ollama" or "groq"
+
+# ─── Ollama Settings (Local) ─────────────────────────────────────────────────
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
 OLLAMA_TIMEOUT = 300  # seconds (5 minutes for CPU - increased from 180s)
 OLLAMA_TEMPERATURE = 0.1  # Low temp = more factual, less creative
+
+# ─── Groq API Settings (Cloud) ───────────────────────────────────────────────
+# Get free API key from: https://console.groq.com
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")  # Set in Streamlit secrets or .env
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")  # Best free tier model
+# Options: llama3-70b-8192, llama3-8b-8192, mixtral-8x7b-32768, gemma-7b-it
+GROQ_TEMPERATURE = 0.3  # Slightly higher for better responses
+GROQ_MAX_TOKENS = 1024  # Maximum response length
 
 # ─── Language Processing ─────────────────────────────────────────────────────
 SUPPORTED_LANGUAGES = ["en", "hi", "te", "ta", "bn", "mixed"]

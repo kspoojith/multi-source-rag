@@ -34,7 +34,10 @@ from typing import List, Dict, Optional, Any
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from backend.config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, OLLAMA_TEMPERATURE
+from backend.config import (
+    OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, OLLAMA_TEMPERATURE,
+    LLM_PROVIDER, GROQ_API_KEY, GROQ_MODEL, GROQ_TEMPERATURE, GROQ_MAX_TOKENS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +241,7 @@ def generate_answer(
     High-level function: Generate an answer for a query using retrieved context.
 
     This is the main entry point called by the API.
+    Supports both Ollama (local) and Groq API (cloud) based on LLM_PROVIDER config.
 
     Args:
         query:    User's question
@@ -252,7 +256,7 @@ def generate_answer(
     # If no relevant results, return a "no context" response
     if not results:
         return {
-            "answer": "I don't have enough information in my knowledge base to answer this question. Please try a different query.",
+            "answer": "I don't have enough information to answer this question. Please try a different query.",
             "sources": [],
             "model": "none",
             "latency_ms": 0,
@@ -263,9 +267,42 @@ def generate_answer(
     # Collect unique sources
     sources = list(set(r.get("source", "unknown") for r in results))
 
-    # Try Ollama first
+    # Choose LLM provider based on config
+    if LLM_PROVIDER == "groq" and GROQ_API_KEY:
+        # Use Groq API (cloud deployment)
+        try:
+            from generation.llm_groq import GroqLLM
+            
+            logger.info("Using Groq API for LLM generation")
+            groq_llm = GroqLLM(api_key=GROQ_API_KEY, model=GROQ_MODEL)
+            
+            messages = build_prompt_for_ollama(query, results, language)  # Same format works for Groq
+            groq_result = groq_llm.generate(
+                messages=messages,
+                temperature=GROQ_TEMPERATURE,
+                max_tokens=GROQ_MAX_TOKENS
+            )
+
+            if groq_result.get("error"):
+                logger.error(f"Groq API error: {groq_result.get('response')}")
+                # Fall through to fallback
+            else:
+                return {
+                    "answer": groq_result["response"],
+                    "sources": sources,
+                    "model": groq_result.get("model", GROQ_MODEL),
+                    "latency_ms": groq_result.get("generation_ms", 0),
+                    "success": True,
+                    "llm_used": True,
+                }
+        except Exception as e:
+            logger.error(f"Groq API error: {e}")
+            # Fall through to fallback
+
+    # Try Ollama (local deployment) - default or fallback
     llm = OllamaLLM()
     if llm.is_available():
+        logger.info("Using Ollama for LLM generation")
         messages = build_prompt_for_ollama(query, results, language)
         llm_result = llm.generate(messages=messages)
 
@@ -279,8 +316,7 @@ def generate_answer(
         }
     else:
         # Fallback: Return retrieved context directly
-        # This ensures the system is always functional for evaluation
-        logger.warning("Ollama not available. Returning raw context.")
+        logger.warning("No LLM available. Returning raw context.")
         context_summary = "\n\n".join(
             f"[{r.get('source', 'unknown')}]: {r.get('text', '')[:200]}..."
             for r in results[:3]

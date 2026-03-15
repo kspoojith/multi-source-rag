@@ -3,6 +3,12 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.0
 pydantic==2.9.0
 
+# Frontend (for Streamlit deployment)
+streamlit==1.44.1
+
+# Environment variables
+python-dotenv>=1.0.0
+
 # Embeddings
 sentence-transformers==3.0.0
 torch>=2.0.0
@@ -14,8 +20,16 @@ numpy>=1.24.0
 # LLM communication
 requests>=2.31.0
 
+# Language processing
+googletrans==4.0.0rc1
+langdetect>=1.0.9
+indic-transliteration>=2.3.0
+
 # Web search (open-domain QA)
 duckduckgo-search==7.5.3
 
 # Utilities
 python-multipart==0.0.9
+
+# Note: Groq API does not require a separate SDK
+# We use the OpenAI-compatible API via requests (already included)

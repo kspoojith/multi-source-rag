@@ -1,0 +1,48 @@
+CODE-MIXED TEST QUERIES (English + Telugu + Hindi)
+===================================================
+Test the multilingual RAG system with these jumbled language queries.
+Copy-paste each query into Streamlit to test Groq API performance.
+
+Query 1:
+Elon Musk ki company Tesla eppudu start ayindi and unki net worth kitni hai?
+
+Query 2:
+AI technology ka future kya hai aur daani impact on jobs ela untundi?
+
+Query 3:
+Climate change ke kaaran global warming badh raha hai, isko rokne ke liye manam emi cheyaali?
+
+Query 4:
+Bharat ke ISRO ne latest mission Chandrayaan-3 nu eppudu launch chesindi?
+
+Query 5:
+Python programming mein machine learning seekhne ke liye best resources emiti?
+
+Query 6:
+IPL cricket tournament mein most runs kisne banaye aur e team gelichindi 2024 lo?
+
+Query 7:
+Artificial intelligence ka use healthcare industry lo ela jarugutondi?
+
+Query 8:
+Modi government ki latest policies for education sector emiti mariyu student loans par kya changes hue?
+
+Query 9:
+Amazon and Flipkart lo online shopping cheseppudu best deals kaise milte hain?
+
+Query 10:
+Cryptocurrency market mein Bitcoin ki price kyun fluctuate hoti hai mariyu indulo invest cheyadam safe hai kya?
+
+INSTRUCTIONS:
+-------------
+1. Start backend: python -m backend.app (with env vars set)
+2. Start frontend: streamlit run streamlit_app.py
+3. Copy each query and paste into Streamlit input
+4. Observe:
+   - Language detection (should detect "mixed")
+   - Translation quality
+   - Web search results
+   - Answer generation time (should be 1-3 seconds with Groq)
+   - Answer quality in mixed language
+
+5. Share the results/screenshots with assistant for analysis

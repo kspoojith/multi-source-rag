@@ -27,6 +27,9 @@ Thumbs.db
 # ─── Environment Variables ────────────────────────────────────────────────────
 .env
 
+# ─── Streamlit Secrets (NEVER commit these!) ──────────────────────────────────
+.streamlit/secrets.toml
+
 # ─── Data (generated at runtime) ─────────────────────────────────────────────
 # Keep raw corpus files, ignore generated index
 data/index/
