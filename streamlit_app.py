@@ -125,23 +125,20 @@ def process_query(system, query: str, use_cache: bool = True) -> Dict[str, Any]:
             return cached
     
     try:
-        # 1. Language Detection
+        # 1. Query Normalization
         t0 = time.time()
-        lang_code = detect_language(query)
+        norm_result = normalize_query(query)
+        normalized_query = norm_result["normalized"]
+        lang_code = norm_result["language"]
         lang_label = get_language_label(lang_code)
-        timings["language_detection"] = time.time() - t0
-        
-        # 2. Query Normalization
-        t0 = time.time()
-        normalized = normalize_query(query)
         timings["normalization"] = time.time() - t0
         
-        # 3. Translation for Search
+        # 2. Translation for Search
         t0 = time.time()
-        search_query = get_search_query(normalized, lang_code)
+        search_query = get_search_query(normalized_query, lang_code)
         timings["translation"] = time.time() - t0
         
-        # 4. Web Search
+        # 3. Web Search
         t0 = time.time()
         documents = search_and_prepare(
             search_query, 
@@ -156,17 +153,17 @@ def process_query(system, query: str, use_cache: bool = True) -> Dict[str, Any]:
                 "query": query
             }
         
-        # 5. Embedding
+        # 4. Embedding
         t0 = time.time()
-        query_embedding = system["model"].get_embeddings([normalized])[0]
+        query_embedding = system["model"].get_embeddings([normalized_query])[0]
         doc_embeddings = system["model"].get_embeddings([d["content"] for d in documents])
         timings["embedding"] = time.time() - t0
         
-        # 6. Hybrid Retrieval
+        # 5. Hybrid Retrieval
         t0 = time.time()
         retrieved = hybrid_search(
             query_embedding=query_embedding,
-            query_text=normalized,
+            query_text=normalized_query,
             documents=documents,
             doc_embeddings=doc_embeddings,
             top_k=RETRIEVAL_TOP_K,
@@ -175,16 +172,16 @@ def process_query(system, query: str, use_cache: bool = True) -> Dict[str, Any]:
         )
         timings["retrieval"] = time.time() - t0
         
-        # 7. Reranking
+        # 6. Reranking
         t0 = time.time()
-        reranked = rerank_results(normalized, retrieved, top_k=5)
+        reranked = rerank_results(normalized_query, retrieved, top_k=5)
         final_docs = deduplicate_results(reranked, max_results=5)
         timings["reranking"] = time.time() - t0
         
-        # 8. LLM Generation
+        # 7. LLM Generation
         t0 = time.time()
         answer_data = generate_answer(
-            query=normalized,
+            query=normalized_query,
             context_docs=final_docs,
             detected_language=lang_code
         )
@@ -204,7 +201,7 @@ def process_query(system, query: str, use_cache: bool = True) -> Dict[str, Any]:
             ],
             "query_analysis": {
                 "original_query": query,
-                "normalized_query": normalized,
+                "normalized_query": normalized_query,
                 "detected_language": lang_label,
                 "search_query": search_query,
                 "total_web_results": len(documents),
@@ -446,8 +443,7 @@ if query:
                 st.markdown(f"**Total Time:** {perf['total_time_seconds']:.2f}s")
                 
                 stages = [
-                    ("Language Detection", perf.get("language_detection", 0)),
-                    ("Query Normalization", perf.get("normalization", 0)),
+                    ("Query Normalization & Language Detection", perf.get("normalization", 0)),
                     ("Translation", perf.get("translation", 0)),
                     ("Web Search", perf.get("web_search", 0)),
                     ("Embedding", perf.get("embedding", 0)),
