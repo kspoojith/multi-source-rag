@@ -16,6 +16,7 @@ import streamlit as st
 import time
 import hashlib
 import sys
+import numpy as np
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
@@ -125,7 +126,7 @@ def process_query(system, query: str, use_cache: bool = True) -> Dict[str, Any]:
             return cached
     
     try:
-        # 1. Query Normalization
+        # 1. Query Normalization & Language Detection
         t0 = time.time()
         norm_result = normalize_query(query)
         normalized_query = norm_result["normalized"]
@@ -135,18 +136,19 @@ def process_query(system, query: str, use_cache: bool = True) -> Dict[str, Any]:
         
         # 2. Translation for Search
         t0 = time.time()
-        search_query = get_search_query(normalized_query, lang_code)
+        english_query = get_search_query(normalized_query, lang_code)
         timings["translation"] = time.time() - t0
         
         # 3. Web Search
         t0 = time.time()
-        documents = search_and_prepare(
-            search_query, 
+        web_chunks = search_and_prepare(
+            query=normalized_query,
+            english_query=english_query,
             max_results=WEB_SEARCH_MAX_RESULTS
         )
         timings["web_search"] = time.time() - t0
         
-        if not documents:
+        if not web_chunks:
             return {
                 "error": True,
                 "message": "No web results found for your query.",
@@ -155,57 +157,70 @@ def process_query(system, query: str, use_cache: bool = True) -> Dict[str, Any]:
         
         # 4. Embedding
         t0 = time.time()
+        # Embed query
         query_embedding = system["model"].embed([normalized_query])[0]
-        doc_embeddings = system["model"].embed([d["content"] for d in documents])
+        
+        # Embed chunks
+        chunk_texts = [chunk["text"] for chunk in web_chunks]
+        chunk_embeddings = system["model"].embed(chunk_texts)
+        
+        # Add similarity scores to chunks
+        for chunk, chunk_embedding in zip(web_chunks, chunk_embeddings):
+            similarity = float(np.dot(query_embedding, chunk_embedding))
+            chunk["score"] = similarity
+        
         timings["embedding"] = time.time() - t0
         
-        # 5. Hybrid Retrieval
+        # 5. Hybrid Search
         t0 = time.time()
-        retrieved = hybrid_search(
-            query_embedding=query_embedding,
-            query_text=normalized_query,
-            documents=documents,
-            doc_embeddings=doc_embeddings,
-            top_k=RETRIEVAL_TOP_K,
+        hybrid_results = hybrid_search(
+            semantic_results=web_chunks,
+            query=normalized_query,
             alpha=SEMANTIC_WEIGHT_ALPHA,
-            beta=KEYWORD_WEIGHT_BETA
+            beta=KEYWORD_WEIGHT_BETA,
         )
-        timings["retrieval"] = time.time() - t0
         
         # 6. Reranking
-        t0 = time.time()
-        reranked = rerank_results(normalized_query, retrieved, top_k=5)
-        final_docs = deduplicate_results(reranked, max_results=5)
-        timings["reranking"] = time.time() - t0
+        reranked_results = rerank_results(
+            results=hybrid_results,
+            query_topic=None,
+            max_per_source=3,
+            top_k=RETRIEVAL_TOP_K
+        )
+        
+        timings["retrieval_rerank"] = time.time() - t0
         
         # 7. LLM Generation
         t0 = time.time()
-        answer_data = generate_answer(
-            query=normalized_query,
-            context_docs=final_docs,
-            detected_language=lang_code
+        gen_result = generate_answer(
+            query=query,
+            results=reranked_results,
+            language=lang_code
         )
         timings["llm_generation"] = time.time() - t0
+        
+        # Extract web URLs
+        web_urls = [chunk.get("url", "") for chunk in web_chunks if chunk.get("url")]
         
         # Prepare response
         total_time = time.time() - start_time
         response = {
-            "answer": answer_data["answer"],
+            "answer": gen_result["answer"],
             "sources": [
                 {
-                    "title": doc["title"],
-                    "url": doc["url"],
-                    "relevance_score": doc.get("final_score", 0.0)
+                    "title": result.get("source", "Web"),
+                    "url": result.get("url", ""),
+                    "relevance_score": result.get("final_score", 0.0)
                 }
-                for doc in final_docs
+                for result in reranked_results
             ],
             "query_analysis": {
                 "original_query": query,
                 "normalized_query": normalized_query,
                 "detected_language": lang_label,
-                "search_query": search_query,
-                "total_web_results": len(documents),
-                "retrieved_docs": len(final_docs)
+                "search_query": english_query,
+                "total_web_results": len(web_chunks),
+                "retrieved_docs": len(reranked_results)
             },
             "performance": {
                 "total_time_seconds": total_time,
